@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang=en-US>
+<meta charset=utf-8>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>ProseMirror footnote example</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel=stylesheet href="../../css/site.css">
+
+<header >
+  <nav>
+    <a class=logo href="../../index.html">ProseMirror</a>
+    <div class=navlinks><a href="../index.html" class=active>Examples</a>
+      <a href="../../docs/index.html" >Documentation</a>
+      <a href="https://discuss.prosemirror.net/">Discuss</a>
+      <a href="https://github.com/prosemirror">GitHub</a>
+      <a href="https://twitter.com/prosemirror">Twitter</a>
+    </div>
+  </nav></header><article><h1>Editing footnotes</h1>
+<p>This example demonstrates one way to implement something like
+footnotes in ProseMirror.</p>
+<style>.ProseMirror {
+    counter-reset: prosemirror-footnote;
+  }
+  footnote {
+    display: inline-block;
+    position: relative;
+    cursor: pointer;
+  }
+  footnote::after {
+    content: counter(prosemirror-footnote);
+    vertical-align: super;
+    font-size: 75%;
+    counter-increment: prosemirror-footnote;
+  }
+  .ProseMirror-hideselection .footnote-tooltip *::selection { background-color: transparent; }
+  .ProseMirror-hideselection .footnote-tooltip *::-moz-selection { background-color: transparent; }
+  .footnote-tooltip {
+    cursor: auto;
+    position: absolute;
+    left: -30px;
+    top: calc(100% + 10px);
+    background: silver;
+    padding: 3px;
+    border-radius: 2px;
+    width: 500px;
+  }
+  .footnote-tooltip::before {
+    border: 5px solid silver;
+    border-top-width: 0px;
+    border-left-color: transparent;
+    border-right-color: transparent;
+    position: absolute;
+    top: -5px;
+    left: 27px;
+    content: " ";
+    height: 0;
+    width: 0;
+  }
+</style>
+<div id="editor"></div>
+<div id="content" style="display: none">
+  <p>This paragraph has a footnote<footnote>Which is a piece of text placed at the bottom of a page or chapter, providing additional <em>comments</em> or <em>citations</em>.</footnote> in it. And another<footnote>Some more footnote text.</footnote> one.</p>
+  <p>Move onto or click on a footnote number to edit it.</p>
+</div>
+<p><a href="https://glitch.com/edit/#!/remix/prosemirror-demo-footnote"><img src="https://cdn.glitch.com/2703baf2-b643-4da7-ab91-7ee2a2d00b5b%2Fremix-button.svg" alt="Remix on Glitch"></a></p>
+<p>Footnotes seem like they should be inline nodes with content—they
+appear in between other inline content, but their content isn't really
+part of the textblock around them. Let's define them like this:</p>
+<pre><code class="language-javascript"><span class="hl-keyword">import</span> {<span class="hl-def">schema</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-schema-basic&quot;</span>
+<span class="hl-keyword">import</span> {<span class="hl-def">Schema</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-model&quot;</span>
+
+<span class="hl-keyword">const</span> <span class="hl-def">footnoteSpec</span> <span class="hl-operator">=</span> {
+  <span class="hl-property">group</span>: <span class="hl-string">&quot;inline&quot;</span>,
+  <span class="hl-property">content</span>: <span class="hl-string">&quot;inline*&quot;</span>,
+  <span class="hl-property">inline</span>: <span class="hl-atom">true</span>,
+  <span class="hl-comment">// This makes the view treat the node as a leaf, even though it</span>
+  <span class="hl-comment">// technically has content</span>
+  <span class="hl-property">atom</span>: <span class="hl-atom">true</span>,
+  <span class="hl-property">toDOM</span>: () <span class="hl-operator">=&gt;</span> [<span class="hl-string">&quot;footnote&quot;</span>, <span class="hl-number">0</span>],
+  <span class="hl-property">parseDOM</span>: [{<span class="hl-property">tag</span>: <span class="hl-string">&quot;footnote&quot;</span>}]
+}
+
+<span class="hl-keyword">const</span> <span class="hl-def">footnoteSchema</span> <span class="hl-operator">=</span> <span class="hl-keyword">new</span> <span class="hl-variable">Schema</span>({
+  <span class="hl-property">nodes</span>: <span class="hl-variable">schema</span>.<span class="hl-property">spec</span>.<span class="hl-property">nodes</span>.<span class="hl-property">addBefore</span>(<span class="hl-string">&quot;image&quot;</span>, <span class="hl-string">&quot;footnote&quot;</span>, <span class="hl-variable">footnoteSpec</span>),
+  <span class="hl-property">marks</span>: <span class="hl-variable">schema</span>.<span class="hl-property">spec</span>.<span class="hl-property">marks</span>
+})
+</code></pre>
+<p>Inline nodes with content are not handled well by the library, at
+least not by default. You are required to write a <a href="../../docs/guide/index.html#view.node_views">node
+view</a> for them, which somehow manages
+the way they appear in the editor.</p>
+<p>So that's what we'll do. Footnotes in this example are drawn as
+numbers. In fact, they are just <code>&lt;footnote&gt;</code> nodes, and we'll rely on
+CSS to add the numbers.</p>
+<pre><code class="language-javascript"><span class="hl-keyword">import</span> {<span class="hl-def">StepMap</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-transform&quot;</span>
+<span class="hl-keyword">import</span> {<span class="hl-def">keymap</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-keymap&quot;</span>
+<span class="hl-keyword">import</span> {<span class="hl-def">undo</span>, <span class="hl-def">redo</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-history&quot;</span>
+
+<span class="hl-keyword">class</span> <span class="hl-def">FootnoteView</span> {
+  <span class="hl-property">constructor</span>(<span class="hl-def">node</span>, <span class="hl-def">view</span>, <span class="hl-def">getPos</span>) {
+    <span class="hl-comment">// We'll need these later</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">node</span> <span class="hl-operator">=</span> <span class="hl-variable-2">node</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">outerView</span> <span class="hl-operator">=</span> <span class="hl-variable-2">view</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">getPos</span> <span class="hl-operator">=</span> <span class="hl-variable-2">getPos</span>
+
+    <span class="hl-comment">// The node's representation in the editor (empty, for now)</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">dom</span> <span class="hl-operator">=</span> <span class="hl-variable">document</span>.<span class="hl-property">createElement</span>(<span class="hl-string">&quot;footnote&quot;</span>)
+    <span class="hl-comment">// These are used when the footnote is selected</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">innerView</span> <span class="hl-operator">=</span> <span class="hl-atom">null</span>
+  }
+</code></pre>
+<p>Only when the node view is selected does the user get to see and
+interact with its content (it'll be selected when the user ‘arrows’
+onto it, because we set the <a href="../../docs/ref/index.html#model.NodeSpec.atom"><code>atom</code></a> property
+on the node spec). These two methods handle node selection and
+deselection the node view.</p>
+<pre><code class="language-javascript">  <span class="hl-variable">selectNode</span>() {
+    <span class="hl-keyword">this</span>.<span class="hl-property">dom</span>.<span class="hl-property">classList</span>.<span class="hl-property">add</span>(<span class="hl-string">&quot;ProseMirror-selectednode&quot;</span>)
+    <span class="hl-keyword">if</span> (<span class="hl-operator">!</span><span class="hl-keyword">this</span>.<span class="hl-property">innerView</span>) <span class="hl-keyword">this</span>.<span class="hl-property">open</span>()
+  }
+
+  <span class="hl-variable">deselectNode</span>() {
+    <span class="hl-keyword">this</span>.<span class="hl-property">dom</span>.<span class="hl-property">classList</span>.<span class="hl-property">remove</span>(<span class="hl-string">&quot;ProseMirror-selectednode&quot;</span>)
+    <span class="hl-keyword">if</span> (<span class="hl-keyword">this</span>.<span class="hl-property">innerView</span>) <span class="hl-keyword">this</span>.<span class="hl-property">close</span>()
+  }
+</code></pre>
+<p>What we'll do is pop up a little sub-editor, which is itself a
+ProseMirror view, with the node's content. Transactions in this
+sub-editor are handled specially, in the <code>dispatchInner</code> method.</p>
+<p>Mod-z and y are bound to run undo and redo on the <em>outer</em> editor.
+We'll see in a moment why that works.</p>
+<pre><code class="language-javascript">  <span class="hl-variable">open</span>() {
+    <span class="hl-comment">// Append a tooltip to the outer node</span>
+    <span class="hl-keyword">let</span> <span class="hl-def">tooltip</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">dom</span>.<span class="hl-property">appendChild</span>(<span class="hl-variable">document</span>.<span class="hl-property">createElement</span>(<span class="hl-string">&quot;div&quot;</span>))
+    <span class="hl-variable-2">tooltip</span>.<span class="hl-property">className</span> <span class="hl-operator">=</span> <span class="hl-string">&quot;footnote-tooltip&quot;</span>
+    <span class="hl-comment">// And put a sub-ProseMirror into that</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">innerView</span> <span class="hl-operator">=</span> <span class="hl-keyword">new</span> <span class="hl-variable">EditorView</span>(<span class="hl-variable-2">tooltip</span>, {
+      <span class="hl-comment">// You can use any node as an editor document</span>
+      <span class="hl-property">state</span>: <span class="hl-variable">EditorState</span>.<span class="hl-property">create</span>({
+        <span class="hl-property">doc</span>: <span class="hl-keyword">this</span>.<span class="hl-property">node</span>,
+        <span class="hl-property">plugins</span>: [<span class="hl-variable">keymap</span>({
+          <span class="hl-string hl-property">&quot;Mod-z&quot;</span>: () <span class="hl-operator">=&gt;</span> <span class="hl-variable">undo</span>(<span class="hl-keyword">this</span>.<span class="hl-property">outerView</span>.<span class="hl-property">state</span>, <span class="hl-keyword">this</span>.<span class="hl-property">outerView</span>.<span class="hl-property">dispatch</span>),
+          <span class="hl-string hl-property">&quot;Mod-y&quot;</span>: () <span class="hl-operator">=&gt;</span> <span class="hl-variable">redo</span>(<span class="hl-keyword">this</span>.<span class="hl-property">outerView</span>.<span class="hl-property">state</span>, <span class="hl-keyword">this</span>.<span class="hl-property">outerView</span>.<span class="hl-property">dispatch</span>)
+        })]
+      }),
+      <span class="hl-comment">// This is the magic part</span>
+      <span class="hl-property">dispatchTransaction</span>: <span class="hl-keyword">this</span>.<span class="hl-property">dispatchInner</span>.<span class="hl-property">bind</span>(<span class="hl-keyword">this</span>),
+      <span class="hl-property">handleDOMEvents</span>: {
+        <span class="hl-property">mousedown</span>: () <span class="hl-operator">=&gt;</span> {
+          <span class="hl-comment">// Kludge to prevent issues due to the fact that the whole</span>
+          <span class="hl-comment">// footnote is node-selected (and thus DOM-selected) when</span>
+          <span class="hl-comment">// the parent editor is focused.</span>
+          <span class="hl-keyword">if</span> (<span class="hl-keyword">this</span>.<span class="hl-property">outerView</span>.<span class="hl-property">hasFocus</span>()) <span class="hl-keyword">this</span>.<span class="hl-property">innerView</span>.<span class="hl-property">focus</span>()
+        }
+      }
+    })
+  }
+
+  <span class="hl-variable">close</span>() {
+    <span class="hl-keyword">this</span>.<span class="hl-property">innerView</span>.<span class="hl-property">destroy</span>()
+    <span class="hl-keyword">this</span>.<span class="hl-property">innerView</span> <span class="hl-operator">=</span> <span class="hl-atom">null</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">dom</span>.<span class="hl-property">textContent</span> <span class="hl-operator">=</span> <span class="hl-string">&quot;&quot;</span>
+  }
+</code></pre>
+<p>What should happen when the content of the sub-editor changes? We
+could just take its content and reset the content of the footnote in
+the outer document to it, but that wouldn't play well with the undo
+history or collaborative editing.</p>
+<p>A nicer approach is to simply apply the steps from the inner editor,
+with an appropriate offset, to the outer document.</p>
+<p>We have to be careful to handle <a href="../../docs/ref/index.html#state.PluginSpec.appendTransaction">appended
+transactions</a>, and to be able to
+handle updates from the outside editor without creating an infinite
+loop, the code also understands the transaction flag <code>&quot;fromOutside&quot;</code>
+and disables propagation when it's present.</p>
+<pre><code class="language-javascript">  <span class="hl-variable">dispatchInner</span>(<span class="hl-variable">tr</span>) {
+    <span class="hl-keyword">let</span> {<span class="hl-def">state</span>, <span class="hl-def">transactions</span>} <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">innerView</span>.<span class="hl-property">state</span>.<span class="hl-property">applyTransaction</span>(<span class="hl-variable">tr</span>)
+    <span class="hl-keyword">this</span>.<span class="hl-property">innerView</span>.<span class="hl-property">updateState</span>(<span class="hl-variable-2">state</span>)
+
+    <span class="hl-keyword">if</span> (<span class="hl-operator">!</span><span class="hl-variable">tr</span>.<span class="hl-property">getMeta</span>(<span class="hl-string">&quot;fromOutside&quot;</span>)) {
+      <span class="hl-keyword">let</span> <span class="hl-def">outerTr</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">outerView</span>.<span class="hl-property">state</span>.<span class="hl-property">tr</span>, <span class="hl-def">offsetMap</span> <span class="hl-operator">=</span> <span class="hl-variable">StepMap</span>.<span class="hl-property">offset</span>(<span class="hl-keyword">this</span>.<span class="hl-property">getPos</span>() <span class="hl-operator">+</span> <span class="hl-number">1</span>)
+      <span class="hl-keyword">for</span> (<span class="hl-keyword">let</span> <span class="hl-def">i</span> <span class="hl-operator">=</span> <span class="hl-number">0</span>; <span class="hl-variable-2">i</span> <span class="hl-operator">&lt;</span> <span class="hl-variable-2">transactions</span>.<span class="hl-property">length</span>; <span class="hl-variable-2">i</span><span class="hl-operator">++</span>) {
+        <span class="hl-keyword">let</span> <span class="hl-def">steps</span> <span class="hl-operator">=</span> <span class="hl-variable-2">transactions</span>[<span class="hl-variable-2">i</span>].<span class="hl-property">steps</span>
+        <span class="hl-keyword">for</span> (<span class="hl-keyword">let</span> <span class="hl-def">j</span> <span class="hl-operator">=</span> <span class="hl-number">0</span>; <span class="hl-variable-2">j</span> <span class="hl-operator">&lt;</span> <span class="hl-variable-2">steps</span>.<span class="hl-property">length</span>; <span class="hl-variable-2">j</span><span class="hl-operator">++</span>)
+          <span class="hl-variable-2">outerTr</span>.<span class="hl-property">step</span>(<span class="hl-variable-2">steps</span>[<span class="hl-variable-2">j</span>].<span class="hl-property">map</span>(<span class="hl-variable-2">offsetMap</span>))
+      }
+      <span class="hl-keyword">if</span> (<span class="hl-variable-2">outerTr</span>.<span class="hl-property">docChanged</span>) <span class="hl-keyword">this</span>.<span class="hl-property">outerView</span>.<span class="hl-property">dispatch</span>(<span class="hl-variable-2">outerTr</span>)
+    }
+  }
+</code></pre>
+<p>To be able to cleanly handle updates from outside (for example through
+collaborative editing, or when the user undoes something, which is
+handled by the outer editor), the node view's
+<a href="../../docs/ref/index.html#view.NodeView.update"><code>update</code></a> method carefully finds the
+difference between its current content and the content of the new
+node. It only replaces the changed part, in order to leave the cursor
+in place whenever possible.</p>
+<pre><code class="language-javascript">  <span class="hl-variable">update</span>(<span class="hl-variable">node</span>) {
+    <span class="hl-keyword">if</span> (<span class="hl-operator">!</span><span class="hl-variable">node</span>.<span class="hl-property">sameMarkup</span>(<span class="hl-keyword">this</span>.<span class="hl-property">node</span>)) <span class="hl-keyword">return</span> <span class="hl-atom">false</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">node</span> <span class="hl-operator">=</span> <span class="hl-variable">node</span>
+    <span class="hl-keyword">if</span> (<span class="hl-keyword">this</span>.<span class="hl-property">innerView</span>) {
+      <span class="hl-keyword">let</span> <span class="hl-def">state</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">innerView</span>.<span class="hl-property">state</span>
+      <span class="hl-keyword">let</span> <span class="hl-def">start</span> <span class="hl-operator">=</span> <span class="hl-variable">node</span>.<span class="hl-property">content</span>.<span class="hl-property">findDiffStart</span>(<span class="hl-variable-2">state</span>.<span class="hl-property">doc</span>.<span class="hl-property">content</span>)
+      <span class="hl-keyword">if</span> (<span class="hl-variable-2">start</span> <span class="hl-operator">!=</span> <span class="hl-atom">null</span>) {
+        <span class="hl-keyword">let</span> {<span class="hl-property">a</span>: <span class="hl-def">endA</span>, <span class="hl-property">b</span>: <span class="hl-def">endB</span>} <span class="hl-operator">=</span> <span class="hl-variable">node</span>.<span class="hl-property">content</span>.<span class="hl-property">findDiffEnd</span>(<span class="hl-variable-2">state</span>.<span class="hl-property">doc</span>.<span class="hl-property">content</span>)
+        <span class="hl-keyword">let</span> <span class="hl-def">overlap</span> <span class="hl-operator">=</span> <span class="hl-variable-2">start</span> <span class="hl-operator">-</span> <span class="hl-variable">Math</span>.<span class="hl-property">min</span>(<span class="hl-variable-2">endA</span>, <span class="hl-variable-2">endB</span>)
+        <span class="hl-keyword">if</span> (<span class="hl-variable-2">overlap</span> <span class="hl-operator">&gt;</span> <span class="hl-number">0</span>) { <span class="hl-variable-2">endA</span> <span class="hl-operator">+=</span> <span class="hl-variable-2">overlap</span>; <span class="hl-variable-2">endB</span> <span class="hl-operator">+=</span> <span class="hl-variable-2">overlap</span> }
+        <span class="hl-keyword">this</span>.<span class="hl-property">innerView</span>.<span class="hl-property">dispatch</span>(
+          <span class="hl-variable-2">state</span>.<span class="hl-property">tr</span>
+            .<span class="hl-property">replace</span>(<span class="hl-variable-2">start</span>, <span class="hl-variable-2">endB</span>, <span class="hl-variable">node</span>.<span class="hl-property">slice</span>(<span class="hl-variable-2">start</span>, <span class="hl-variable-2">endA</span>))
+            .<span class="hl-property">setMeta</span>(<span class="hl-string">&quot;fromOutside&quot;</span>, <span class="hl-atom">true</span>))
+      }
+    }
+    <span class="hl-keyword">return</span> <span class="hl-atom">true</span>
+  }
+</code></pre>
+<p>Finally, the nodeview has to handle destruction and queries about
+which events and mutations should be handled by the outer editor.</p>
+<pre><code class="language-javascript">  <span class="hl-variable">destroy</span>() {
+    <span class="hl-keyword">if</span> (<span class="hl-keyword">this</span>.<span class="hl-property">innerView</span>) <span class="hl-keyword">this</span>.<span class="hl-property">close</span>()
+  }
+
+  <span class="hl-variable">stopEvent</span>(<span class="hl-variable">event</span>) {
+    <span class="hl-keyword">return</span> <span class="hl-keyword">this</span>.<span class="hl-property">innerView</span> <span class="hl-operator">&amp;</span><span class="hl-operator">&amp;</span> <span class="hl-keyword">this</span>.<span class="hl-property">innerView</span>.<span class="hl-property">dom</span>.<span class="hl-property">contains</span>(<span class="hl-variable">event</span>.<span class="hl-property">target</span>)
+  }
+
+  <span class="hl-variable">ignoreMutation</span>() { <span class="hl-keyword">return</span> <span class="hl-atom">true</span> }
+}
+</code></pre>
+<p>We can enable our schema and node view like this, to create an actual
+editor.</p>
+<pre><code class="language-javascript"><span class="hl-keyword">import</span> {<span class="hl-def">EditorState</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-state&quot;</span>
+<span class="hl-keyword">import</span> {<span class="hl-def">DOMParser</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-model&quot;</span>
+<span class="hl-keyword">import</span> {<span class="hl-def">EditorView</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-view&quot;</span>
+<span class="hl-keyword">import</span> {<span class="hl-def">exampleSetup</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-example-setup&quot;</span>
+
+<span class="hl-variable">window</span>.<span class="hl-property">view</span> <span class="hl-operator">=</span> <span class="hl-keyword">new</span> <span class="hl-variable">EditorView</span>(<span class="hl-variable">document</span>.<span class="hl-property">querySelector</span>(<span class="hl-string">&quot;#editor&quot;</span>), {
+  <span class="hl-property">state</span>: <span class="hl-variable">EditorState</span>.<span class="hl-property">create</span>({
+    <span class="hl-property">doc</span>: <span class="hl-variable">DOMParser</span>.<span class="hl-property">fromSchema</span>(<span class="hl-variable">footnoteSchema</span>).<span class="hl-property">parse</span>(<span class="hl-variable">document</span>.<span class="hl-property">querySelector</span>(<span class="hl-string">&quot;#content&quot;</span>)),
+    <span class="hl-property">plugins</span>: <span class="hl-variable">exampleSetup</span>({<span class="hl-property">schema</span>: <span class="hl-variable">footnoteSchema</span>, <span class="hl-property">menuContent</span>: <span class="hl-variable">menu</span>.<span class="hl-property">fullMenu</span>})
+  }),
+  <span class="hl-property">nodeViews</span>: {
+    <span class="hl-property">footnote</span>(<span class="hl-def">node</span>, <span class="hl-def">view</span>, <span class="hl-def">getPos</span>) { <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-variable">FootnoteView</span>(<span class="hl-variable-2">node</span>, <span class="hl-variable-2">view</span>, <span class="hl-variable-2">getPos</span>) }
+  }
+})
+</code></pre>
+<link rel=stylesheet href="../../css/editor.css">
+<script src="../prosemirror.js"></script>
+<script src="example.js"></script></article>
+
+<footer>
+  <nav>
+    <a class=logo href="index.html">&nbsp;</a>
+    <div class=navlinks>
+      <a href="../../backers.html">Backers</a>
+      <a href="http://contributor-covenant.org/version/1/1/0/">Code of Conduct</a>
+      <a href="https://discuss.prosemirror.net/">Discuss</a>
+      <a href="https://github.com/prosemirror/prosemirror/issues">Report an Issue</a>
+    </div>
+  </nav>
+</footer>
+
+</html>

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang=en-US>
+<meta charset=utf-8>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>ProseMirror change tracking example</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel=stylesheet href="../../css/site.css">
+
+<header >
+  <nav>
+    <a class=logo href="../../index.html">ProseMirror</a>
+    <div class=navlinks><a href="../index.html" class=active>Examples</a>
+      <a href="../../docs/index.html" >Documentation</a>
+      <a href="https://discuss.prosemirror.net/">Discuss</a>
+      <a href="https://github.com/prosemirror">GitHub</a>
+      <a href="https://twitter.com/prosemirror">Twitter</a>
+    </div>
+  </nav></header><article><h1>Tracking changes</h1>
+<p>Changes are first-class values in ProseMirror. You can hold on to
+them, and do things with them. Such as
+<a href="../../docs/guide/index.html#transform.rebasing">rebasing</a> them across other changes,
+inverting them, or inspecting them to see what they did.</p>
+<p>This example uses those properties to allow you to “commit” your
+changes, to revert individual commits, and to find out which commit a
+piece of text originates from.</p>
+<style>.commit {
+    margin-bottom: 4px;
+  }
+  .commit:hover {
+    background: #ff8;
+  }
+  .commit-revert {
+    color: #a22;
+  }
+  .commit-time {
+    background: #5ab;
+    padding: 0 5px;
+    color: white;
+    font-size: 90%;
+  }
+  .commit-blame {
+    background: #ff8;
+  }
+  .blame-info {
+    position: fixed;
+    border: 1px solid silver;
+    background: white;
+    padding: 3px 8px;
+    z-index: 3;
+  }
+  .blame-wrap {
+    position: absolute;
+    right: 0;
+    top: 0;
+  }
+  #commit {
+    margin: 6px 0;
+    position: relative;
+  }
+  .blame-marker {
+    background: #ff8;
+  }
+</style>
+<div id="editor"></div>
+<form id="commit">
+  Commit message: <input type=text id=message name=message> <button id=commitbutton type="submit">commit</button>
+    <div class=blame-wrap><button type=button id=blame>blame at cursor</button></div>
+</form>
+<div id="commits" style="margin-bottom: 23px"></div>
+<p><a href="https://glitch.com/edit/#!/remix/prosemirror-demo-track"><img src="https://cdn.glitch.com/2703baf2-b643-4da7-ab91-7ee2a2d00b5b%2Fremix-button.svg" alt="Remix on Glitch"></a></p>
+<p>Hover over commits to highlight the text they introduced.</p>
+<p>This page won't list the <a href="https://github.com/ProseMirror/website/blob/master/example/track/index.js">whole source
+code</a>
+for the example, only the most interesting parts.</p>
+<p>The first thing we need is a way to track the commit history. An
+editor plugin works well for this, since it can observe changes as
+they come in. This is what the plugin's state value looks like:</p>
+<pre><code class="language-javascript"><span class="hl-keyword">class</span> <span class="hl-def">TrackState</span> {
+  <span class="hl-property">constructor</span>(<span class="hl-def">blameMap</span>, <span class="hl-def">commits</span>, <span class="hl-def">uncommittedSteps</span>, <span class="hl-def">uncommittedMaps</span>) {
+    <span class="hl-comment">// The blame map is a data structure that lists a sequence of</span>
+    <span class="hl-comment">// document ranges, along with the commit that inserted them. This</span>
+    <span class="hl-comment">// can be used to, for example, highlight the part of the document</span>
+    <span class="hl-comment">// that was inserted by a commit.</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">blameMap</span> <span class="hl-operator">=</span> <span class="hl-variable-2">blameMap</span>
+    <span class="hl-comment">// The commit history, as an array of objects.</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">commits</span> <span class="hl-operator">=</span> <span class="hl-variable-2">commits</span>
+    <span class="hl-comment">// Inverted steps and their maps corresponding to the changes that</span>
+    <span class="hl-comment">// have been made since the last commit.</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">uncommittedSteps</span> <span class="hl-operator">=</span> <span class="hl-variable-2">uncommittedSteps</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">uncommittedMaps</span> <span class="hl-operator">=</span> <span class="hl-variable-2">uncommittedMaps</span>
+  }
+
+  <span class="hl-comment">// Apply a transform to this state</span>
+  <span class="hl-property">applyTransform</span>(<span class="hl-def">transform</span>) {
+    <span class="hl-comment">// Invert the steps in the transaction, to be able to save them in</span>
+    <span class="hl-comment">// the next commit</span>
+    <span class="hl-keyword">let</span> <span class="hl-def">inverted</span> <span class="hl-operator">=</span>
+      <span class="hl-variable-2">transform</span>.<span class="hl-property">steps</span>.<span class="hl-property">map</span>((<span class="hl-def">step</span>, <span class="hl-def">i</span>) <span class="hl-operator">=&gt;</span> <span class="hl-variable-2">step</span>.<span class="hl-property">invert</span>(<span class="hl-variable-2">transform</span>.<span class="hl-property">docs</span>[<span class="hl-variable-2">i</span>]))
+    <span class="hl-keyword">let</span> <span class="hl-def">newBlame</span> <span class="hl-operator">=</span> <span class="hl-variable">updateBlameMap</span>(<span class="hl-keyword">this</span>.<span class="hl-property">blameMap</span>, <span class="hl-variable-2">transform</span>, <span class="hl-keyword">this</span>.<span class="hl-property">commits</span>.<span class="hl-property">length</span>)
+    <span class="hl-comment">// Create a new state—since these are part of the editor state, a</span>
+    <span class="hl-comment">// persistent data structure, they must not be mutated.</span>
+    <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-variable">TrackState</span>(<span class="hl-variable-2">newBlame</span>, <span class="hl-keyword">this</span>.<span class="hl-property">commits</span>,
+                          <span class="hl-keyword">this</span>.<span class="hl-property">uncommittedSteps</span>.<span class="hl-property">concat</span>(<span class="hl-variable-2">inverted</span>),
+                          <span class="hl-keyword">this</span>.<span class="hl-property">uncommittedMaps</span>.<span class="hl-property">concat</span>(<span class="hl-variable-2">transform</span>.<span class="hl-property">mapping</span>.<span class="hl-property">maps</span>))
+  }
+
+  <span class="hl-comment">// When a transaction is marked as a commit, this is used to put any</span>
+  <span class="hl-comment">// uncommitted steps into a new commit.</span>
+  <span class="hl-property">applyCommit</span>(<span class="hl-def">message</span>, <span class="hl-def">time</span>) {
+    <span class="hl-keyword">if</span> (<span class="hl-keyword">this</span>.<span class="hl-property">uncommittedSteps</span>.<span class="hl-property">length</span> <span class="hl-operator">==</span> <span class="hl-number">0</span>) <span class="hl-keyword">return</span> <span class="hl-keyword">this</span>
+    <span class="hl-keyword">let</span> <span class="hl-def">commit</span> <span class="hl-operator">=</span> <span class="hl-keyword">new</span> <span class="hl-variable">Commit</span>(<span class="hl-variable-2">message</span>, <span class="hl-variable-2">time</span>, <span class="hl-keyword">this</span>.<span class="hl-property">uncommittedSteps</span>,
+                            <span class="hl-keyword">this</span>.<span class="hl-property">uncommittedMaps</span>)
+    <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-variable">TrackState</span>(<span class="hl-keyword">this</span>.<span class="hl-property">blameMap</span>, <span class="hl-keyword">this</span>.<span class="hl-property">commits</span>.<span class="hl-property">concat</span>(<span class="hl-variable-2">commit</span>), [], [])
+  }
+}
+</code></pre>
+<p>The plugin itself does little more than watch transactions and update
+its state. When a meta property tagged by the plugin is present on the
+transaction, it is a commit transaction, and the property's value is
+the commit message.</p>
+<pre><code class="language-javascript"><span class="hl-keyword">import</span> {<span class="hl-def">Plugin</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-state&quot;</span>
+
+<span class="hl-keyword">const</span> <span class="hl-def">trackPlugin</span> <span class="hl-operator">=</span> <span class="hl-keyword">new</span> <span class="hl-variable">Plugin</span>({
+  <span class="hl-property">state</span>: {
+    <span class="hl-property">init</span>(<span class="hl-def">_</span>, <span class="hl-def">instance</span>) {
+      <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-variable">TrackState</span>([<span class="hl-keyword">new</span> <span class="hl-variable">Span</span>(<span class="hl-number">0</span>, <span class="hl-variable-2">instance</span>.<span class="hl-property">doc</span>.<span class="hl-property">content</span>.<span class="hl-property">size</span>, <span class="hl-atom">null</span>)], [], [], [])
+    },
+    <span class="hl-property">apply</span>(<span class="hl-def">tr</span>, <span class="hl-def">tracked</span>) {
+      <span class="hl-keyword">if</span> (<span class="hl-variable-2">tr</span>.<span class="hl-property">docChanged</span>) <span class="hl-variable-2">tracked</span> <span class="hl-operator">=</span> <span class="hl-variable-2">tracked</span>.<span class="hl-property">applyTransform</span>(<span class="hl-variable-2">tr</span>)
+      <span class="hl-keyword">let</span> <span class="hl-def">commitMessage</span> <span class="hl-operator">=</span> <span class="hl-variable-2">tr</span>.<span class="hl-property">getMeta</span>(<span class="hl-keyword">this</span>)
+      <span class="hl-keyword">if</span> (<span class="hl-variable-2">commitMessage</span>) <span class="hl-variable-2">tracked</span> <span class="hl-operator">=</span> <span class="hl-variable-2">tracked</span>.<span class="hl-property">applyCommit</span>(<span class="hl-variable-2">commitMessage</span>, <span class="hl-keyword">new</span> <span class="hl-variable">Date</span>(<span class="hl-variable-2">tr</span>.<span class="hl-property">time</span>))
+      <span class="hl-keyword">return</span> <span class="hl-variable-2">tracked</span>
+    }
+  }
+})
+</code></pre>
+<p>Tracking history like this allows for all kinds of useful things, such
+as figuring out who added a given piece of code, and when. Or
+reverting individual commits.</p>
+<p>Reverting an old steps requires
+<a href="../../docs/guide/index.html#transform.rebasing">rebasing</a> the inverted form of those
+steps over all intermediate steps. That is what this function does.</p>
+<pre><code class="language-javascript"><span class="hl-keyword">import</span> {<span class="hl-def">Mapping</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-transform&quot;</span>
+
+<span class="hl-keyword">function</span> <span class="hl-def">revertCommit</span>(<span class="hl-def">commit</span>) {
+  <span class="hl-keyword">let</span> <span class="hl-def">trackState</span> <span class="hl-operator">=</span> <span class="hl-variable">trackPlugin</span>.<span class="hl-property">getState</span>(<span class="hl-variable">state</span>)
+  <span class="hl-keyword">let</span> <span class="hl-def">index</span> <span class="hl-operator">=</span> <span class="hl-variable-2">trackState</span>.<span class="hl-property">commits</span>.<span class="hl-property">indexOf</span>(<span class="hl-variable-2">commit</span>)
+  <span class="hl-comment">// If this commit is not in the history, we can't revert it</span>
+  <span class="hl-keyword">if</span> (<span class="hl-variable-2">index</span> <span class="hl-operator">==</span> <span class="hl-operator">-</span><span class="hl-number">1</span>) <span class="hl-keyword">return</span>
+
+  <span class="hl-comment">// Reverting is only possible if there are no uncommitted changes</span>
+  <span class="hl-keyword">if</span> (<span class="hl-variable-2">trackState</span>.<span class="hl-property">uncommittedSteps</span>.<span class="hl-property">length</span>)
+    <span class="hl-keyword">return</span> <span class="hl-variable">alert</span>(<span class="hl-string">&quot;Commit your changes first!&quot;</span>)
+
+  <span class="hl-comment">// This is the mapping from the document as it was at the start of</span>
+  <span class="hl-comment">// the commit to the current document.</span>
+  <span class="hl-keyword">let</span> <span class="hl-def">remap</span> <span class="hl-operator">=</span> <span class="hl-keyword">new</span> <span class="hl-variable">Mapping</span>(<span class="hl-variable-2">trackState</span>.<span class="hl-property">commits</span>.<span class="hl-property">slice</span>(<span class="hl-variable-2">index</span>)
+                          .<span class="hl-property">reduce</span>((<span class="hl-def">maps</span>, <span class="hl-def">c</span>) <span class="hl-operator">=&gt;</span> <span class="hl-variable-2">maps</span>.<span class="hl-property">concat</span>(<span class="hl-variable-2">c</span>.<span class="hl-property">maps</span>), []))
+  <span class="hl-keyword">let</span> <span class="hl-def">tr</span> <span class="hl-operator">=</span> <span class="hl-variable">state</span>.<span class="hl-property">tr</span>
+  <span class="hl-comment">// Build up a transaction that includes all (inverted) steps in this</span>
+  <span class="hl-comment">// commit, rebased to the current document. They have to be applied</span>
+  <span class="hl-comment">// in reverse order.</span>
+  <span class="hl-keyword">for</span> (<span class="hl-keyword">let</span> <span class="hl-def">i</span> <span class="hl-operator">=</span> <span class="hl-variable-2">commit</span>.<span class="hl-property">steps</span>.<span class="hl-property">length</span> <span class="hl-operator">-</span> <span class="hl-number">1</span>; <span class="hl-variable-2">i</span> <span class="hl-operator">&gt;=</span> <span class="hl-number">0</span>; <span class="hl-variable-2">i</span><span class="hl-operator">--</span>) {
+    <span class="hl-comment">// The mapping is sliced to not include maps for this step and the</span>
+    <span class="hl-comment">// ones before it.</span>
+    <span class="hl-keyword">let</span> <span class="hl-def">remapped</span> <span class="hl-operator">=</span> <span class="hl-variable-2">commit</span>.<span class="hl-property">steps</span>[<span class="hl-variable-2">i</span>].<span class="hl-property">map</span>(<span class="hl-variable-2">remap</span>.<span class="hl-property">slice</span>(<span class="hl-variable-2">i</span> <span class="hl-operator">+</span> <span class="hl-number">1</span>))
+    <span class="hl-keyword">if</span> (<span class="hl-operator">!</span><span class="hl-variable-2">remapped</span>) <span class="hl-keyword">continue</span>
+    <span class="hl-keyword">let</span> <span class="hl-def">result</span> <span class="hl-operator">=</span> <span class="hl-variable-2">tr</span>.<span class="hl-property">maybeStep</span>(<span class="hl-variable-2">remapped</span>)
+    <span class="hl-comment">// If the step can be applied, add its map to our mapping</span>
+    <span class="hl-comment">// pipeline, so that subsequent steps are mapped over it.</span>
+    <span class="hl-keyword">if</span> (<span class="hl-variable-2">result</span>.<span class="hl-property">doc</span>) <span class="hl-variable-2">remap</span>.<span class="hl-property">appendMap</span>(<span class="hl-variable-2">remapped</span>.<span class="hl-property">getMap</span>(), <span class="hl-variable-2">i</span>)
+  }
+  <span class="hl-comment">// Add a commit message and dispatch.</span>
+  <span class="hl-keyword">if</span> (<span class="hl-variable-2">tr</span>.<span class="hl-property">docChanged</span>)
+    <span class="hl-variable">dispatch</span>(<span class="hl-variable-2">tr</span>.<span class="hl-property">setMeta</span>(<span class="hl-variable">trackPlugin</span>, <span class="hl-string-2">`Revert '${</span><span class="hl-variable-2">commit</span>.<span class="hl-property">message</span><span class="hl-string-2">}</span><span class="hl-string-2">'`</span>))
+}
+</code></pre>
+<p>Due to the implicit conflict resolution when moving changes across
+each other, outcomes of complicated reverts, where later changes touch
+the same content, can sometimes be unintuitive. In a production
+application, it may be desirable to detect such conflicts and provide
+the user with an interface to resolve them.</p>
+<link rel=stylesheet href="../../css/editor.css">
+<script src="../prosemirror.js"></script>
+<script src="example.js"></script></article>
+
+<footer>
+  <nav>
+    <a class=logo href="index.html">&nbsp;</a>
+    <div class=navlinks>
+      <a href="../../backers.html">Backers</a>
+      <a href="http://contributor-covenant.org/version/1/1/0/">Code of Conduct</a>
+      <a href="https://discuss.prosemirror.net/">Discuss</a>
+      <a href="https://github.com/prosemirror/prosemirror/issues">Report an Issue</a>
+    </div>
+  </nav>
+</footer>
+
+</html>

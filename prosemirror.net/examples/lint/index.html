@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang=en-US>
+<meta charset=utf-8>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>ProseMirror lint example</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel=stylesheet href="../../css/site.css">
+
+<header >
+  <nav>
+    <a class=logo href="../../index.html">ProseMirror</a>
+    <div class=navlinks><a href="../index.html" class=active>Examples</a>
+      <a href="../../docs/index.html" >Documentation</a>
+      <a href="https://discuss.prosemirror.net/">Discuss</a>
+      <a href="https://github.com/prosemirror">GitHub</a>
+      <a href="https://twitter.com/prosemirror">Twitter</a>
+    </div>
+  </nav></header><article><h1>Linting example</h1>
+<p>The browser DOM serves its purpose—representing complex webpages—very
+well. But its huge scope and loose structure makes it difficult to
+make assumptions about. A document model that represents a smaller set
+of documents can be easier to reason about.</p>
+<p>This example implements a simple document
+<a href="https://en.wikipedia.org/wiki/Lint_(software)">linter</a> that finds
+problems in your document, and makes it easy to fix them.</p>
+<style>#editor { position: relative }
+  .problem { background: #fdd; border-bottom: 1px solid #f22; margin-bottom: -1px; }
+  .lint-icon {
+    display: inline-block; position: absolute; right: 2px; cursor: pointer;
+    border-radius: 100px; background: #f22; color: white; font-family: times, georgia, serif;
+    font-size: 15px; font-weight: bold; width: 1.1em; height: 1.1em;
+    text-align: center; padding-left: .5px; line-height: 1.1em
+  }
+  .lint-icon:before { content: "!" }
+  .ProseMirror { padding-right: 20px }
+</style>
+<div id=editor></div>
+<div id=content style="display: none">
+  <h3>Lint example</h3>
+  <p>This is a sentence ,but the comma isn't in the right place.</p>
+  <h5>Too-minor header</h5>
+  <p>This is an image <img src="../../img/smiley.png"> without alt text.
+  You can hover over the icons on the right to see what the
+  problem is, click them to select the relevant text, and, obviously,
+  double-click them to automatically fix it (if supported).</p>
+</div>
+<p><a href="https://glitch.com/edit/#!/remix/prosemirror-demo-lint"><img src="https://cdn.glitch.com/2703baf2-b643-4da7-ab91-7ee2a2d00b5b%2Fremix-button.svg" alt="Remix on Glitch"></a></p>
+<p>The first part of this example is a function that, given a document,
+produces an array of problems found in that document. We'll use the
+<a href="../../docs/ref/index.html#model.Node.descendants"><code>descendants</code></a> method to easily iterate
+over all nodes in a document. Depending on the type of node, different
+types of problems are checked for.</p>
+<p>Each problem is represented as an object with a message, a start, and
+an end, so that they can be displayed and highlighted. The objects may
+also optionally have a <code>fix</code> method, which can be called (passing the
+view) to fix the problem.</p>
+<pre><code class="language-javascript"><span class="hl-comment">// Words you probably shouldn't use</span>
+<span class="hl-keyword">const</span> <span class="hl-def">badWords</span> <span class="hl-operator">=</span> <span class="hl-string-2">/\b(obviously|clearly|evidently|simply)\b/ig</span>
+<span class="hl-comment">// Matches punctuation with a space before it</span>
+<span class="hl-keyword">const</span> <span class="hl-def">badPunc</span> <span class="hl-operator">=</span> <span class="hl-string-2">/ ([,\.!?:]) ?/g</span>
+
+<span class="hl-keyword">function</span> <span class="hl-def">lint</span>(<span class="hl-def">doc</span>) {
+  <span class="hl-keyword">let</span> <span class="hl-def">result</span> <span class="hl-operator">=</span> [], <span class="hl-def">lastHeadLevel</span> <span class="hl-operator">=</span> <span class="hl-atom">null</span>
+
+  <span class="hl-keyword">function</span> <span class="hl-def">record</span>(<span class="hl-def">msg</span>, <span class="hl-def">from</span>, <span class="hl-def">to</span>, <span class="hl-def">fix</span>) {
+    <span class="hl-variable-2">result</span>.<span class="hl-property">push</span>({<span class="hl-property">msg</span>, <span class="hl-property">from</span>, <span class="hl-property">to</span>, <span class="hl-property">fix</span>})
+  }
+
+  <span class="hl-comment">// For each node in the document</span>
+  <span class="hl-variable-2">doc</span>.<span class="hl-property">descendants</span>((<span class="hl-def">node</span>, <span class="hl-def">pos</span>) <span class="hl-operator">=&gt;</span> {
+    <span class="hl-keyword">if</span> (<span class="hl-variable-2">node</span>.<span class="hl-property">isText</span>) {
+      <span class="hl-comment">// Scan text nodes for suspicious patterns</span>
+      <span class="hl-keyword">let</span> <span class="hl-def">m</span>
+      <span class="hl-keyword">while</span> (<span class="hl-variable-2">m</span> <span class="hl-operator">=</span> <span class="hl-variable">badWords</span>.<span class="hl-property">exec</span>(<span class="hl-variable-2">node</span>.<span class="hl-property">text</span>))
+        <span class="hl-variable-2">record</span>(<span class="hl-string-2">`Try not to say '${</span><span class="hl-variable-2">m</span>[<span class="hl-number">0</span>]<span class="hl-string-2">}</span><span class="hl-string-2">'`</span>,
+               <span class="hl-variable-2">pos</span> <span class="hl-operator">+</span> <span class="hl-variable-2">m</span>.<span class="hl-property">index</span>, <span class="hl-variable-2">pos</span> <span class="hl-operator">+</span> <span class="hl-variable-2">m</span>.<span class="hl-property">index</span> <span class="hl-operator">+</span> <span class="hl-variable-2">m</span>[<span class="hl-number">0</span>].<span class="hl-property">length</span>)
+      <span class="hl-keyword">while</span> (<span class="hl-variable-2">m</span> <span class="hl-operator">=</span> <span class="hl-variable">badPunc</span>.<span class="hl-property">exec</span>(<span class="hl-variable-2">node</span>.<span class="hl-property">text</span>))
+        <span class="hl-variable-2">record</span>(<span class="hl-string">&quot;Suspicious spacing around punctuation&quot;</span>,
+               <span class="hl-variable-2">pos</span> <span class="hl-operator">+</span> <span class="hl-variable-2">m</span>.<span class="hl-property">index</span>, <span class="hl-variable-2">pos</span> <span class="hl-operator">+</span> <span class="hl-variable-2">m</span>.<span class="hl-property">index</span> <span class="hl-operator">+</span> <span class="hl-variable-2">m</span>[<span class="hl-number">0</span>].<span class="hl-property">length</span>,
+               <span class="hl-variable">fixPunc</span>(<span class="hl-variable-2">m</span>[<span class="hl-number">1</span>] <span class="hl-operator">+</span> <span class="hl-string">&quot; &quot;</span>))
+    } <span class="hl-keyword">else</span> <span class="hl-keyword">if</span> (<span class="hl-variable-2">node</span>.<span class="hl-property">type</span>.<span class="hl-property">name</span> <span class="hl-operator">==</span> <span class="hl-string">&quot;heading&quot;</span>) {
+      <span class="hl-comment">// Check whether heading levels fit under the current level</span>
+      <span class="hl-keyword">let</span> <span class="hl-def">level</span> <span class="hl-operator">=</span> <span class="hl-variable-2">node</span>.<span class="hl-property">attrs</span>.<span class="hl-property">level</span>
+      <span class="hl-keyword">if</span> (<span class="hl-variable-2">lastHeadLevel</span> <span class="hl-operator">!=</span> <span class="hl-atom">null</span> <span class="hl-operator">&amp;</span><span class="hl-operator">&amp;</span> <span class="hl-variable-2">level</span> <span class="hl-operator">&gt;</span> <span class="hl-variable-2">lastHeadLevel</span> <span class="hl-operator">+</span> <span class="hl-number">1</span>)
+        <span class="hl-variable-2">record</span>(<span class="hl-string-2">`Heading too small (${</span><span class="hl-variable-2">level</span><span class="hl-string-2">}</span> <span class="hl-string-2">under ${</span><span class="hl-variable-2">lastHeadLevel</span><span class="hl-string-2">}</span><span class="hl-string-2">)`</span>,
+               <span class="hl-variable-2">pos</span> <span class="hl-operator">+</span> <span class="hl-number">1</span>, <span class="hl-variable-2">pos</span> <span class="hl-operator">+</span> <span class="hl-number">1</span> <span class="hl-operator">+</span> <span class="hl-variable-2">node</span>.<span class="hl-property">content</span>.<span class="hl-property">size</span>,
+               <span class="hl-variable">fixHeader</span>(<span class="hl-variable-2">lastHeadLevel</span> <span class="hl-operator">+</span> <span class="hl-number">1</span>))
+      <span class="hl-variable-2">lastHeadLevel</span> <span class="hl-operator">=</span> <span class="hl-variable-2">level</span>
+    } <span class="hl-keyword">else</span> <span class="hl-keyword">if</span> (<span class="hl-variable-2">node</span>.<span class="hl-property">type</span>.<span class="hl-property">name</span> <span class="hl-operator">==</span> <span class="hl-string">&quot;image&quot;</span> <span class="hl-operator">&amp;</span><span class="hl-operator">&amp;</span> <span class="hl-operator">!</span><span class="hl-variable-2">node</span>.<span class="hl-property">attrs</span>.<span class="hl-property">alt</span>) {
+      <span class="hl-comment">// Ensure images have alt text</span>
+      <span class="hl-variable-2">record</span>(<span class="hl-string">&quot;Image without alt text&quot;</span>, <span class="hl-variable-2">pos</span>, <span class="hl-variable-2">pos</span> <span class="hl-operator">+</span> <span class="hl-number">1</span>, <span class="hl-variable">addAlt</span>)
+    }
+  })
+
+  <span class="hl-keyword">return</span> <span class="hl-variable-2">result</span>
+}
+</code></pre>
+<p>The helper utilities that are used to provide fix commands look like
+this.</p>
+<pre><code class="language-javascript"><span class="hl-keyword">function</span> <span class="hl-def">fixPunc</span>(<span class="hl-def">replacement</span>) {
+  <span class="hl-keyword">return</span> <span class="hl-keyword">function</span>({<span class="hl-def">state</span>, <span class="hl-def">dispatch</span>}) {
+    <span class="hl-variable-2">dispatch</span>(<span class="hl-variable-2">state</span>.<span class="hl-property">tr</span>.<span class="hl-property">replaceWith</span>(<span class="hl-keyword">this</span>.<span class="hl-property">from</span>, <span class="hl-keyword">this</span>.<span class="hl-property">to</span>,
+                                  <span class="hl-variable-2">state</span>.<span class="hl-property">schema</span>.<span class="hl-property">text</span>(<span class="hl-variable-2">replacement</span>)))
+  }
+}
+
+<span class="hl-keyword">function</span> <span class="hl-def">fixHeader</span>(<span class="hl-def">level</span>) {
+  <span class="hl-keyword">return</span> <span class="hl-keyword">function</span>({<span class="hl-def">state</span>, <span class="hl-def">dispatch</span>}) {
+    <span class="hl-variable-2">dispatch</span>(<span class="hl-variable-2">state</span>.<span class="hl-property">tr</span>.<span class="hl-property">setNodeMarkup</span>(<span class="hl-keyword">this</span>.<span class="hl-property">from</span> <span class="hl-operator">-</span> <span class="hl-number">1</span>, <span class="hl-atom">null</span>, {<span class="hl-property">level</span>}))
+  }
+}
+
+<span class="hl-keyword">function</span> <span class="hl-def">addAlt</span>({<span class="hl-def">state</span>, <span class="hl-def">dispatch</span>}) {
+  <span class="hl-keyword">let</span> <span class="hl-def">alt</span> <span class="hl-operator">=</span> <span class="hl-variable">prompt</span>(<span class="hl-string">&quot;Alt text&quot;</span>, <span class="hl-string">&quot;&quot;</span>)
+  <span class="hl-keyword">if</span> (<span class="hl-variable-2">alt</span>) {
+    <span class="hl-keyword">let</span> <span class="hl-def">attrs</span> <span class="hl-operator">=</span> <span class="hl-variable">Object</span>.<span class="hl-property">assign</span>({}, <span class="hl-variable-2">state</span>.<span class="hl-property">doc</span>.<span class="hl-property">nodeAt</span>(<span class="hl-keyword">this</span>.<span class="hl-property">from</span>).<span class="hl-property">attrs</span>, {<span class="hl-property">alt</span>})
+    <span class="hl-variable-2">dispatch</span>(<span class="hl-variable-2">state</span>.<span class="hl-property">tr</span>.<span class="hl-property">setNodeMarkup</span>(<span class="hl-keyword">this</span>.<span class="hl-property">from</span>, <span class="hl-atom">null</span>, <span class="hl-variable-2">attrs</span>))
+  }
+}
+</code></pre>
+<p>The way the plugin will work is that it'll keep a set of decorations
+that highlight problems and inserts an icon next to them. CSS is used
+to position the icon on the right side of the editor, so that it
+doesn't interfere with the document flow.</p>
+<pre><code class="language-javascript"><span class="hl-keyword">import</span> {<span class="hl-def">Decoration</span>, <span class="hl-def">DecorationSet</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-view&quot;</span>
+
+<span class="hl-keyword">function</span> <span class="hl-def">lintDeco</span>(<span class="hl-def">doc</span>) {
+  <span class="hl-keyword">let</span> <span class="hl-def">decos</span> <span class="hl-operator">=</span> []
+  <span class="hl-variable">lint</span>(<span class="hl-variable-2">doc</span>).<span class="hl-property">forEach</span>(<span class="hl-def">prob</span> <span class="hl-operator">=&gt;</span> {
+    <span class="hl-variable-2">decos</span>.<span class="hl-property">push</span>(<span class="hl-variable">Decoration</span>.<span class="hl-property">inline</span>(<span class="hl-variable-2">prob</span>.<span class="hl-property">from</span>, <span class="hl-variable-2">prob</span>.<span class="hl-property">to</span>, {<span class="hl-property">class</span>: <span class="hl-string">&quot;problem&quot;</span>}),
+               <span class="hl-variable">Decoration</span>.<span class="hl-property">widget</span>(<span class="hl-variable-2">prob</span>.<span class="hl-property">from</span>, <span class="hl-variable">lintIcon</span>(<span class="hl-variable-2">prob</span>)))
+  })
+  <span class="hl-keyword">return</span> <span class="hl-variable">DecorationSet</span>.<span class="hl-property">create</span>(<span class="hl-variable-2">doc</span>, <span class="hl-variable-2">decos</span>)
+}
+
+<span class="hl-keyword">function</span> <span class="hl-def">lintIcon</span>(<span class="hl-def">prob</span>) {
+  <span class="hl-keyword">let</span> <span class="hl-def">icon</span> <span class="hl-operator">=</span> <span class="hl-variable">document</span>.<span class="hl-property">createElement</span>(<span class="hl-string">&quot;div&quot;</span>)
+  <span class="hl-variable-2">icon</span>.<span class="hl-property">className</span> <span class="hl-operator">=</span> <span class="hl-string">&quot;lint-icon&quot;</span>
+  <span class="hl-variable-2">icon</span>.<span class="hl-property">title</span> <span class="hl-operator">=</span> <span class="hl-variable-2">prob</span>.<span class="hl-property">msg</span>
+  <span class="hl-variable-2">icon</span>.<span class="hl-property">problem</span> <span class="hl-operator">=</span> <span class="hl-variable-2">prob</span>
+  <span class="hl-keyword">return</span> <span class="hl-variable-2">icon</span>
+}
+</code></pre>
+<p>The problem object is stored in the icon DOM nodes, so that event
+handlers can access them when handling clicks on the node. We'll make
+a single click on an icon select the annotated region, and a double
+click run the <code>fix</code> method.</p>
+<p>Recomputing the whole set of problems, and recreating the set of
+decorations, on every change isn't very efficient, so for production
+code you might want to consider an approach that can incrementally
+update these. That'd be quite a bit more complex, but definitely
+doable—the transaction can give you the information you need to figure
+out what part of the document changed.</p>
+<pre><code class="language-javascript"><span class="hl-keyword">import</span> {<span class="hl-def">Plugin</span>, <span class="hl-def">TextSelection</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-state&quot;</span>
+
+<span class="hl-keyword">let</span> <span class="hl-def">lintPlugin</span> <span class="hl-operator">=</span> <span class="hl-keyword">new</span> <span class="hl-variable">Plugin</span>({
+  <span class="hl-property">state</span>: {
+    <span class="hl-property">init</span>(<span class="hl-def">_</span>, {<span class="hl-def">doc</span>}) { <span class="hl-keyword">return</span> <span class="hl-variable">lintDeco</span>(<span class="hl-variable-2">doc</span>) },
+    <span class="hl-property">apply</span>(<span class="hl-def">tr</span>, <span class="hl-def">old</span>) { <span class="hl-keyword">return</span> <span class="hl-variable-2">tr</span>.<span class="hl-property">docChanged</span> <span class="hl-operator">?</span> <span class="hl-variable">lintDeco</span>(<span class="hl-variable-2">tr</span>.<span class="hl-property">doc</span>) : <span class="hl-variable-2">old</span> }
+  },
+  <span class="hl-property">props</span>: {
+    <span class="hl-property">decorations</span>(<span class="hl-def">state</span>) { <span class="hl-keyword">return</span> <span class="hl-keyword">this</span>.<span class="hl-property">getState</span>(<span class="hl-variable-2">state</span>) },
+    <span class="hl-property">handleClick</span>(<span class="hl-def">view</span>, <span class="hl-def">_</span>, <span class="hl-def">event</span>) {
+      <span class="hl-keyword">if</span> (<span class="hl-string-2">/lint-icon/</span>.<span class="hl-property">test</span>(<span class="hl-variable-2">event</span>.<span class="hl-property">target</span>.<span class="hl-property">className</span>)) {
+        <span class="hl-keyword">let</span> {<span class="hl-def">from</span>, <span class="hl-def">to</span>} <span class="hl-operator">=</span> <span class="hl-variable-2">event</span>.<span class="hl-property">target</span>.<span class="hl-property">problem</span>
+        <span class="hl-variable-2">view</span>.<span class="hl-property">dispatch</span>(
+          <span class="hl-variable-2">view</span>.<span class="hl-property">state</span>.<span class="hl-property">tr</span>
+            .<span class="hl-property">setSelection</span>(<span class="hl-variable">TextSelection</span>.<span class="hl-property">create</span>(<span class="hl-variable-2">view</span>.<span class="hl-property">state</span>.<span class="hl-property">doc</span>, <span class="hl-variable-2">from</span>, <span class="hl-variable-2">to</span>))
+            .<span class="hl-property">scrollIntoView</span>())
+        <span class="hl-keyword">return</span> <span class="hl-atom">true</span>
+      }
+    },
+    <span class="hl-property">handleDoubleClick</span>(<span class="hl-def">view</span>, <span class="hl-def">_</span>, <span class="hl-def">event</span>) {
+      <span class="hl-keyword">if</span> (<span class="hl-string-2">/lint-icon/</span>.<span class="hl-property">test</span>(<span class="hl-variable-2">event</span>.<span class="hl-property">target</span>.<span class="hl-property">className</span>)) {
+        <span class="hl-keyword">let</span> <span class="hl-def">prob</span> <span class="hl-operator">=</span> <span class="hl-variable-2">event</span>.<span class="hl-property">target</span>.<span class="hl-property">problem</span>
+        <span class="hl-keyword">if</span> (<span class="hl-variable-2">prob</span>.<span class="hl-property">fix</span>) {
+          <span class="hl-variable-2">prob</span>.<span class="hl-property">fix</span>(<span class="hl-variable-2">view</span>)
+          <span class="hl-variable-2">view</span>.<span class="hl-property">focus</span>()
+          <span class="hl-keyword">return</span> <span class="hl-atom">true</span>
+        }
+      }
+    }
+  }
+})
+</code></pre>
+<link rel=stylesheet href="../../css/editor.css">
+<script src="../prosemirror.js"></script>
+<script src="example.js"></script></article>
+
+<footer>
+  <nav>
+    <a class=logo href="index.html">&nbsp;</a>
+    <div class=navlinks>
+      <a href="../../backers.html">Backers</a>
+      <a href="http://contributor-covenant.org/version/1/1/0/">Code of Conduct</a>
+      <a href="https://discuss.prosemirror.net/">Discuss</a>
+      <a href="https://github.com/prosemirror/prosemirror/issues">Report an Issue</a>
+    </div>
+  </nav>
+</footer>
+
+</html>

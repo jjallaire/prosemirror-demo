@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang=en-US>
+<meta charset=utf-8>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>ProseMirror upload example</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel=stylesheet href="../../css/site.css">
+
+<header >
+  <nav>
+    <a class=logo href="../../index.html">ProseMirror</a>
+    <div class=navlinks><a href="../index.html" class=active>Examples</a>
+      <a href="../../docs/index.html" >Documentation</a>
+      <a href="https://discuss.prosemirror.net/">Discuss</a>
+      <a href="https://github.com/prosemirror">GitHub</a>
+      <a href="https://twitter.com/prosemirror">Twitter</a>
+    </div>
+  </nav></header><article><h1>Upload handling</h1>
+<p>Some types of editing involve asynchronous operations, but you want to
+present them to your users as a single action. For example, when
+inserting an image from the user's local filesystem, you won't have
+access to the actual image until you're uploaded it and created a URL
+for it. Yet, you don't want to make the user go through the motion of
+first uploading the image, then waiting for that to complete, and only
+then inserting the image into the document.</p>
+<p>Ideally, when the image is selected, you start the upload but also
+immediately insert a placeholder into the document. Then, when the
+upload finishes, that placeholder is replaced with the final image.</p>
+<style>placeholder {
+    display: inline;
+    border: 1px solid #ccc;
+    color: #ccc;
+  }
+  placeholder:after {
+    content: "☁";
+    font-size: 200%;
+    line-height: 0.1;
+    font-weight: bold;
+  }
+  .ProseMirror img { max-width: 100px }
+</style>
+<div id=editor style="margin-bottom: 0"></div>
+<div>Insert image: <input type=file id=image-upload></div>
+<div style="display: none" id=content>
+  <p>This paragraph needs an image.</p>
+</div>
+<p><a href="https://glitch.com/edit/#!/remix/prosemirror-demo-upload"><img src="https://cdn.glitch.com/2703baf2-b643-4da7-ab91-7ee2a2d00b5b%2Fremix-button.svg" alt="Remix on Glitch"></a></p>
+<p>Since the upload might take a moment, and the user might make more
+changes while waiting for it, the placeholder should move along with
+its context as the document is edited, and when the the final image is
+inserted, it should be put where the placeholder has ended up by that
+time.</p>
+<p>The easiest way to do this is to make the placeholder a
+<a href="../../docs/guide/index.html#view.decorations">decoration</a>, so that it only exists in
+the user's interface. Let's start by writing a plugin that manages
+such decorations.</p>
+<pre><code class="language-javascript"><span class="hl-keyword">import</span> {<span class="hl-def">Plugin</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-state&quot;</span>
+<span class="hl-keyword">import</span> {<span class="hl-def">Decoration</span>, <span class="hl-def">DecorationSet</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-view&quot;</span>
+
+<span class="hl-keyword">let</span> <span class="hl-def">placeholderPlugin</span> <span class="hl-operator">=</span> <span class="hl-keyword">new</span> <span class="hl-variable">Plugin</span>({
+  <span class="hl-property">state</span>: {
+    <span class="hl-property">init</span>() { <span class="hl-keyword">return</span> <span class="hl-variable">DecorationSet</span>.<span class="hl-property">empty</span> },
+    <span class="hl-property">apply</span>(<span class="hl-def">tr</span>, <span class="hl-def">set</span>) {
+      <span class="hl-comment">// Adjust decoration positions to changes made by the transaction</span>
+      <span class="hl-variable-2">set</span> <span class="hl-operator">=</span> <span class="hl-variable-2">set</span>.<span class="hl-property">map</span>(<span class="hl-variable-2">tr</span>.<span class="hl-property">mapping</span>, <span class="hl-variable-2">tr</span>.<span class="hl-property">doc</span>)
+      <span class="hl-comment">// See if the transaction adds or removes any placeholders</span>
+      <span class="hl-keyword">let</span> <span class="hl-def">action</span> <span class="hl-operator">=</span> <span class="hl-variable-2">tr</span>.<span class="hl-property">getMeta</span>(<span class="hl-keyword">this</span>)
+      <span class="hl-keyword">if</span> (<span class="hl-variable-2">action</span> <span class="hl-operator">&amp;</span><span class="hl-operator">&amp;</span> <span class="hl-variable-2">action</span>.<span class="hl-property">add</span>) {
+        <span class="hl-keyword">let</span> <span class="hl-def">widget</span> <span class="hl-operator">=</span> <span class="hl-variable">document</span>.<span class="hl-property">createElement</span>(<span class="hl-string">&quot;placeholder&quot;</span>)
+        <span class="hl-keyword">let</span> <span class="hl-def">deco</span> <span class="hl-operator">=</span> <span class="hl-variable">Decoration</span>.<span class="hl-property">widget</span>(<span class="hl-variable-2">action</span>.<span class="hl-property">add</span>.<span class="hl-property">pos</span>, <span class="hl-variable-2">widget</span>, {<span class="hl-property">id</span>: <span class="hl-variable-2">action</span>.<span class="hl-property">add</span>.<span class="hl-property">id</span>})
+        <span class="hl-variable-2">set</span> <span class="hl-operator">=</span> <span class="hl-variable-2">set</span>.<span class="hl-property">add</span>(<span class="hl-variable-2">tr</span>.<span class="hl-property">doc</span>, [<span class="hl-variable-2">deco</span>])
+      } <span class="hl-keyword">else</span> <span class="hl-keyword">if</span> (<span class="hl-variable-2">action</span> <span class="hl-operator">&amp;</span><span class="hl-operator">&amp;</span> <span class="hl-variable-2">action</span>.<span class="hl-property">remove</span>) {
+        <span class="hl-variable-2">set</span> <span class="hl-operator">=</span> <span class="hl-variable-2">set</span>.<span class="hl-property">remove</span>(<span class="hl-variable-2">set</span>.<span class="hl-property">find</span>(<span class="hl-atom">null</span>, <span class="hl-atom">null</span>,
+                                  <span class="hl-def">spec</span> <span class="hl-operator">=&gt;</span> <span class="hl-variable-2">spec</span>.<span class="hl-property">id</span> <span class="hl-operator">==</span> <span class="hl-variable-2">action</span>.<span class="hl-property">remove</span>.<span class="hl-property">id</span>))
+      }
+      <span class="hl-keyword">return</span> <span class="hl-variable-2">set</span>
+    }
+  },
+  <span class="hl-property">props</span>: {
+    <span class="hl-property">decorations</span>(<span class="hl-def">state</span>) { <span class="hl-keyword">return</span> <span class="hl-keyword">this</span>.<span class="hl-property">getState</span>(<span class="hl-variable-2">state</span>) }
+  }
+})
+</code></pre>
+<p>This is a thin wrapper around a <a href="../../docs/ref/index.html#view.DecorationSet">decoration
+set</a>—it has to be a <em>set</em> because multiple
+uploads can be in progress at the same time. The meta property for the
+plugin can be used to add and remove widget decorations by ID.</p>
+<p>The plugin comes with a function that returns the current position of
+the placeholder with the given ID, if it still exists.</p>
+<pre><code class="language-javascript"><span class="hl-keyword">function</span> <span class="hl-def">findPlaceholder</span>(<span class="hl-def">state</span>, <span class="hl-def">id</span>) {
+  <span class="hl-keyword">let</span> <span class="hl-def">decos</span> <span class="hl-operator">=</span> <span class="hl-variable">placeholderPlugin</span>.<span class="hl-property">getState</span>(<span class="hl-variable-2">state</span>)
+  <span class="hl-keyword">let</span> <span class="hl-def">found</span> <span class="hl-operator">=</span> <span class="hl-variable-2">decos</span>.<span class="hl-property">find</span>(<span class="hl-atom">null</span>, <span class="hl-atom">null</span>, <span class="hl-def">spec</span> <span class="hl-operator">=&gt;</span> <span class="hl-variable-2">spec</span>.<span class="hl-property">id</span> <span class="hl-operator">==</span> <span class="hl-variable-2">id</span>)
+  <span class="hl-keyword">return</span> <span class="hl-variable-2">found</span>.<span class="hl-property">length</span> <span class="hl-operator">?</span> <span class="hl-variable-2">found</span>[<span class="hl-number">0</span>].<span class="hl-property">from</span> : <span class="hl-atom">null</span>
+}
+</code></pre>
+<p>When the file input below the editor is used, this event handler
+checks some conditions, and fires off the upload when possible.</p>
+<pre><code class="language-javascript"><span class="hl-variable">document</span>.<span class="hl-property">querySelector</span>(<span class="hl-string">&quot;#image-upload&quot;</span>).<span class="hl-property">addEventListener</span>(<span class="hl-string">&quot;change&quot;</span>, <span class="hl-def">e</span> <span class="hl-operator">=&gt;</span> {
+  <span class="hl-keyword">if</span> (<span class="hl-variable">view</span>.<span class="hl-property">state</span>.<span class="hl-property">selection</span>.<span class="hl-property">$from</span>.<span class="hl-property">parent</span>.<span class="hl-property">inlineContent</span> <span class="hl-operator">&amp;</span><span class="hl-operator">&amp;</span> <span class="hl-variable-2">e</span>.<span class="hl-property">target</span>.<span class="hl-property">files</span>.<span class="hl-property">length</span>)
+    <span class="hl-variable">startImageUpload</span>(<span class="hl-variable">view</span>, <span class="hl-variable-2">e</span>.<span class="hl-property">target</span>.<span class="hl-property">files</span>[<span class="hl-number">0</span>])
+  <span class="hl-variable">view</span>.<span class="hl-property">focus</span>()
+})
+</code></pre>
+<p>The core functionality happens in <code>startImageUpload</code>. The utility
+<code>uploadFile</code>, which returns a promise that resolves to the uploaded
+file's URL (in the demo it actually just waits for a bit and then
+returns a <code>data:</code> URL).</p>
+<pre><code class="language-javascript"><span class="hl-keyword">function</span> <span class="hl-def">startImageUpload</span>(<span class="hl-def">view</span>, <span class="hl-def">file</span>) {
+  <span class="hl-comment">// A fresh object to act as the ID for this upload</span>
+  <span class="hl-keyword">let</span> <span class="hl-def">id</span> <span class="hl-operator">=</span> {}
+
+  <span class="hl-comment">// Replace the selection with a placeholder</span>
+  <span class="hl-keyword">let</span> <span class="hl-def">tr</span> <span class="hl-operator">=</span> <span class="hl-variable-2">view</span>.<span class="hl-property">state</span>.<span class="hl-property">tr</span>
+  <span class="hl-keyword">if</span> (<span class="hl-operator">!</span><span class="hl-variable-2">tr</span>.<span class="hl-property">selection</span>.<span class="hl-property">empty</span>) <span class="hl-variable-2">tr</span>.<span class="hl-property">deleteSelection</span>()
+  <span class="hl-variable-2">tr</span>.<span class="hl-property">setMeta</span>(<span class="hl-variable">placeholderPlugin</span>, {<span class="hl-property">add</span>: {<span class="hl-property">id</span>, <span class="hl-property">pos</span>: <span class="hl-variable-2">tr</span>.<span class="hl-property">selection</span>.<span class="hl-property">from</span>}})
+  <span class="hl-variable-2">view</span>.<span class="hl-property">dispatch</span>(<span class="hl-variable-2">tr</span>)
+
+  <span class="hl-variable">uploadFile</span>(<span class="hl-variable-2">file</span>).<span class="hl-property">then</span>(<span class="hl-def">url</span> <span class="hl-operator">=&gt;</span> {
+    <span class="hl-keyword">let</span> <span class="hl-def">pos</span> <span class="hl-operator">=</span> <span class="hl-variable">findPlaceholder</span>(<span class="hl-variable-2">view</span>.<span class="hl-property">state</span>, <span class="hl-variable-2">id</span>)
+    <span class="hl-comment">// If the content around the placeholder has been deleted, drop</span>
+    <span class="hl-comment">// the image</span>
+    <span class="hl-keyword">if</span> (<span class="hl-variable-2">pos</span> <span class="hl-operator">==</span> <span class="hl-atom">null</span>) <span class="hl-keyword">return</span>
+    <span class="hl-comment">// Otherwise, insert it at the placeholder's position, and remove</span>
+    <span class="hl-comment">// the placeholder</span>
+    <span class="hl-variable-2">view</span>.<span class="hl-property">dispatch</span>(<span class="hl-variable-2">view</span>.<span class="hl-property">state</span>.<span class="hl-property">tr</span>
+                  .<span class="hl-property">replaceWith</span>(<span class="hl-variable-2">pos</span>, <span class="hl-variable-2">pos</span>, <span class="hl-variable">schema</span>.<span class="hl-property">nodes</span>.<span class="hl-property">image</span>.<span class="hl-property">create</span>({<span class="hl-property">src</span>: <span class="hl-variable-2">url</span>}))
+                  .<span class="hl-property">setMeta</span>(<span class="hl-variable">placeholderPlugin</span>, {<span class="hl-property">remove</span>: {<span class="hl-property">id</span>}}))
+  }, () <span class="hl-operator">=&gt;</span> {
+    <span class="hl-comment">// On failure, just clean up the placeholder</span>
+    <span class="hl-variable-2">view</span>.<span class="hl-property">dispatch</span>(<span class="hl-variable-2">tr</span>.<span class="hl-property">setMeta</span>(<span class="hl-variable">placeholderPlugin</span>, {<span class="hl-property">remove</span>: {<span class="hl-property">id</span>}}))
+  })
+}
+</code></pre>
+<p>Because the placeholder plugin <a href="../../docs/ref/index.html#view.DecorationSet.map">maps</a> its
+decorations through transactions, <code>findPlaceholder</code> will get the
+accurate position of the image, even if the document was modified
+during the upload.</p>
+<link rel=stylesheet href="../../css/editor.css">
+<script src="../prosemirror.js"></script>
+<script src="example.js"></script></article>
+
+<footer>
+  <nav>
+    <a class=logo href="index.html">&nbsp;</a>
+    <div class=navlinks>
+      <a href="../../backers.html">Backers</a>
+      <a href="http://contributor-covenant.org/version/1/1/0/">Code of Conduct</a>
+      <a href="https://discuss.prosemirror.net/">Discuss</a>
+      <a href="https://github.com/prosemirror/prosemirror/issues">Report an Issue</a>
+    </div>
+  </nav>
+</footer>
+
+</html>

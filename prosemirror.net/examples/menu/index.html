@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang=en-US>
+<meta charset=utf-8>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>ProseMirror menu example</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel=stylesheet href="../../css/site.css">
+
+<header >
+  <nav>
+    <a class=logo href="../../index.html">ProseMirror</a>
+    <div class=navlinks><a href="../index.html" class=active>Examples</a>
+      <a href="../../docs/index.html" >Documentation</a>
+      <a href="https://discuss.prosemirror.net/">Discuss</a>
+      <a href="https://github.com/prosemirror">GitHub</a>
+      <a href="https://twitter.com/prosemirror">Twitter</a>
+    </div>
+  </nav></header><article><h1>Adding a menu</h1>
+<p>Most of the examples use the <a href="https://github.com/prosemirror/prosemirror-example-setup">example setup
+package</a> to
+create a menu, but we actually don't recommend using that and the
+example <a href="https://github.com/prosemirror/prosemirror-menu">menu
+package</a> in actual
+production, since they are rather simplistic, opinioned modules, and
+you're likely to run into their limitations rather quickly.</p>
+<p>This example will go through building a custom (and ugly) menu for a
+ProseMirror editor.</p>
+<style>.menubar {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.2);
+    line-height: 0.1;
+  }
+  .menuicon {
+    display: inline-block;
+    border-right: 1px solid rgba(0, 0, 0, 0.2);
+    color: #888;
+    line-height: 1;
+    padding: 0 7px;
+    margin: 1px;
+    cursor: pointer;
+    text-align: center;
+    min-width: 1.4em;
+  }
+  .strong, .heading { font-weight: bold; }
+  .em { font-style: italic; }
+
+  #editor { padding-top: 0 }
+</style>
+<div id=editor></div>
+<div style="display: none" id=content>
+  <h3>Simple editor</h3>
+  <p>With a very crude menu bar.
+</div>
+<p><a href="https://glitch.com/edit/#!/remix/prosemirror-demo-menu"><img src="https://cdn.glitch.com/2703baf2-b643-4da7-ab91-7ee2a2d00b5b%2Fremix-button.svg" alt="Remix on Glitch"></a></p>
+<p>The idea is, roughly, to create a number of user interface elements
+and tie them to <a href="../../docs/guide/index.html#commands">commands</a>. When clicked, they
+should execute these commands on the editor.</p>
+<p>One question is how to deal with commands that aren't always
+applicable—when you are in a paragraph, should the control for ‘make
+this a paragraph’ be shown? If so, should it be grayed out? This
+example will simply hide buttons when their command is not currently
+applicable.</p>
+<p>To be able to do that, it needs to update the menu structure every
+time the editor state changes. (Depending on the number of items in
+your menu, and the amount of work required for determining whether
+they are applicable, this can get expensive. There's no real solution
+for this, except either keeping the number and complexity of the
+commands low, or not changing the look of your menu depending on
+state.)</p>
+<p>If you already have some kind of dataflow abstraction that you're
+routing ProseMirror updates though, writing the menu as a separate
+component and connecting it to the editor state should work well. If
+not, a plugin is probably the easiest solution.</p>
+<p>The component for the menu might look something like this:</p>
+<pre><code class="language-javascript"><span class="hl-keyword">class</span> <span class="hl-def">MenuView</span> {
+  <span class="hl-property">constructor</span>(<span class="hl-def">items</span>, <span class="hl-def">editorView</span>) {
+    <span class="hl-keyword">this</span>.<span class="hl-property">items</span> <span class="hl-operator">=</span> <span class="hl-variable-2">items</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">editorView</span> <span class="hl-operator">=</span> <span class="hl-variable-2">editorView</span>
+
+    <span class="hl-keyword">this</span>.<span class="hl-property">dom</span> <span class="hl-operator">=</span> <span class="hl-variable">document</span>.<span class="hl-property">createElement</span>(<span class="hl-string">&quot;div&quot;</span>)
+    <span class="hl-keyword">this</span>.<span class="hl-property">dom</span>.<span class="hl-property">className</span> <span class="hl-operator">=</span> <span class="hl-string">&quot;menubar&quot;</span>
+    <span class="hl-variable-2">items</span>.<span class="hl-property">forEach</span>(({<span class="hl-def">dom</span>}) <span class="hl-operator">=&gt;</span> <span class="hl-keyword">this</span>.<span class="hl-property">dom</span>.<span class="hl-property">appendChild</span>(<span class="hl-variable-2">dom</span>))
+    <span class="hl-keyword">this</span>.<span class="hl-property">update</span>()
+
+    <span class="hl-keyword">this</span>.<span class="hl-property">dom</span>.<span class="hl-property">addEventListener</span>(<span class="hl-string">&quot;mousedown&quot;</span>, <span class="hl-def">e</span> <span class="hl-operator">=&gt;</span> {
+      <span class="hl-variable-2">e</span>.<span class="hl-property">preventDefault</span>()
+      <span class="hl-variable-2">editorView</span>.<span class="hl-property">focus</span>()
+      <span class="hl-variable-2">items</span>.<span class="hl-property">forEach</span>(({<span class="hl-def">command</span>, <span class="hl-def">dom</span>}) <span class="hl-operator">=&gt;</span> {
+        <span class="hl-keyword">if</span> (<span class="hl-variable-2">dom</span>.<span class="hl-property">contains</span>(<span class="hl-variable-2">e</span>.<span class="hl-property">target</span>))
+          <span class="hl-variable-2">command</span>(<span class="hl-variable-2">editorView</span>.<span class="hl-property">state</span>, <span class="hl-variable-2">editorView</span>.<span class="hl-property">dispatch</span>, <span class="hl-variable-2">editorView</span>)
+      })
+    })
+  }
+
+  <span class="hl-property">update</span>() {
+    <span class="hl-keyword">this</span>.<span class="hl-property">items</span>.<span class="hl-property">forEach</span>(({<span class="hl-def">command</span>, <span class="hl-def">dom</span>}) <span class="hl-operator">=&gt;</span> {
+      <span class="hl-keyword">let</span> <span class="hl-def">active</span> <span class="hl-operator">=</span> <span class="hl-variable-2">command</span>(<span class="hl-keyword">this</span>.<span class="hl-property">editorView</span>.<span class="hl-property">state</span>, <span class="hl-atom">null</span>, <span class="hl-keyword">this</span>.<span class="hl-property">editorView</span>)
+      <span class="hl-variable-2">dom</span>.<span class="hl-property">style</span>.<span class="hl-property">display</span> <span class="hl-operator">=</span> <span class="hl-variable-2">active</span> <span class="hl-operator">?</span> <span class="hl-string">&quot;&quot;</span> : <span class="hl-string">&quot;none&quot;</span>
+    })
+  }
+
+  <span class="hl-property">destroy</span>() { <span class="hl-keyword">this</span>.<span class="hl-property">dom</span>.<span class="hl-property">remove</span>() }
+}
+</code></pre>
+<p>It takes an array of menu items, which are objects with <code>command</code> and
+<code>dom</code> properties, and puts those into a menu bar element. Then, it
+wires up an event handler which, when a mouse button is pressed on
+this bar, figures out which item was clicked, and runs the
+corresponding command.</p>
+<p>To update the menu for a new state, all commands are run without
+dispatch function, and the items for those that return false are
+hidden.</p>
+<p>Wiring this component to an actual editor view is a bit awkward—it
+needs access to the editor view when initialized, but at the same
+time, that editor view's
+<a href="../../docs/ref/index.html#view.DirectEditorProps.dispatchTransaction"><code>dispatchTransaction</code></a>
+prop needs to call its update method. Plugins can help here. They
+allow you define a <a href="../../docs/ref/index.html#state.PluginSpec.view">plugin view</a>, like this:</p>
+<pre><code class="language-javascript"><span class="hl-keyword">import</span> {<span class="hl-def">Plugin</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-state&quot;</span>
+
+<span class="hl-keyword">function</span> <span class="hl-def">menuPlugin</span>(<span class="hl-def">items</span>) {
+  <span class="hl-keyword">return</span> <span class="hl-keyword">new</span> <span class="hl-variable">Plugin</span>({
+    <span class="hl-property">view</span>(<span class="hl-def">editorView</span>) {
+      <span class="hl-keyword">let</span> <span class="hl-def">menuView</span> <span class="hl-operator">=</span> <span class="hl-keyword">new</span> <span class="hl-variable">MenuView</span>(<span class="hl-variable-2">items</span>, <span class="hl-variable-2">editorView</span>)
+      <span class="hl-variable-2">editorView</span>.<span class="hl-property">dom</span>.<span class="hl-property">parentNode</span>.<span class="hl-property">insertBefore</span>(<span class="hl-variable-2">menuView</span>.<span class="hl-property">dom</span>, <span class="hl-variable-2">editorView</span>.<span class="hl-property">dom</span>)
+      <span class="hl-keyword">return</span> <span class="hl-variable-2">menuView</span>
+    }
+  })
+}
+</code></pre>
+<p>When an editor view is initialized, or when the set of plugins in its
+state change, the plugin views for any plugins that define them get
+initialized. These plugin views then have their <code>update</code> method called
+every time the editor's state is updated, and their <code>destroy</code> method
+called when they are torn down. So by adding this plugin to an editor,
+we can make sure that the editor view gets a menu bar, and that this
+menu bar is kept in sync with the editor.</p>
+<p>The actual menu items might look like this, for a basic menu with
+strong, emphasis, and block type buttons.</p>
+<pre><code class="language-javascript"><span class="hl-keyword">import</span> {<span class="hl-def">toggleMark</span>, <span class="hl-def">setBlockType</span>, <span class="hl-def">wrapIn</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-commands&quot;</span>
+<span class="hl-keyword">import</span> {<span class="hl-def">schema</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-schema-basic&quot;</span>
+
+<span class="hl-comment">// Helper function to create menu icons</span>
+<span class="hl-keyword">function</span> <span class="hl-def">icon</span>(<span class="hl-def">text</span>, <span class="hl-def">name</span>) {
+  <span class="hl-keyword">let</span> <span class="hl-def">span</span> <span class="hl-operator">=</span> <span class="hl-variable">document</span>.<span class="hl-property">createElement</span>(<span class="hl-string">&quot;span&quot;</span>)
+  <span class="hl-variable-2">span</span>.<span class="hl-property">className</span> <span class="hl-operator">=</span> <span class="hl-string">&quot;menuicon &quot;</span> <span class="hl-operator">+</span> <span class="hl-variable-2">name</span>
+  <span class="hl-variable-2">span</span>.<span class="hl-property">title</span> <span class="hl-operator">=</span> <span class="hl-variable-2">name</span>
+  <span class="hl-variable-2">span</span>.<span class="hl-property">textContent</span> <span class="hl-operator">=</span> <span class="hl-variable-2">text</span>
+  <span class="hl-keyword">return</span> <span class="hl-variable-2">span</span>
+}
+
+<span class="hl-comment">// Create an icon for a heading at the given level</span>
+<span class="hl-keyword">function</span> <span class="hl-def">heading</span>(<span class="hl-def">level</span>) {
+  <span class="hl-keyword">return</span> {
+    <span class="hl-property">command</span>: <span class="hl-variable">setBlockType</span>(<span class="hl-variable">schema</span>.<span class="hl-property">nodes</span>.<span class="hl-property">heading</span>, {<span class="hl-property">level</span>}),
+    <span class="hl-property">dom</span>: <span class="hl-variable">icon</span>(<span class="hl-string">&quot;H&quot;</span> <span class="hl-operator">+</span> <span class="hl-variable-2">level</span>, <span class="hl-string">&quot;heading&quot;</span>)
+  }
+}
+
+<span class="hl-keyword">let</span> <span class="hl-def">menu</span> <span class="hl-operator">=</span> <span class="hl-variable">menuPlugin</span>([
+  {<span class="hl-property">command</span>: <span class="hl-variable">toggleMark</span>(<span class="hl-variable">schema</span>.<span class="hl-property">marks</span>.<span class="hl-property">strong</span>), <span class="hl-property">dom</span>: <span class="hl-variable">icon</span>(<span class="hl-string">&quot;B&quot;</span>, <span class="hl-string">&quot;strong&quot;</span>)},
+  {<span class="hl-property">command</span>: <span class="hl-variable">toggleMark</span>(<span class="hl-variable">schema</span>.<span class="hl-property">marks</span>.<span class="hl-property">em</span>), <span class="hl-property">dom</span>: <span class="hl-variable">icon</span>(<span class="hl-string">&quot;i&quot;</span>, <span class="hl-string">&quot;em&quot;</span>)},
+  {<span class="hl-property">command</span>: <span class="hl-variable">setBlockType</span>(<span class="hl-variable">schema</span>.<span class="hl-property">nodes</span>.<span class="hl-property">paragraph</span>), <span class="hl-property">dom</span>: <span class="hl-variable">icon</span>(<span class="hl-string">&quot;p&quot;</span>, <span class="hl-string">&quot;paragraph&quot;</span>)},
+  <span class="hl-variable">heading</span>(<span class="hl-number">1</span>), <span class="hl-variable">heading</span>(<span class="hl-number">2</span>), <span class="hl-variable">heading</span>(<span class="hl-number">3</span>),
+  {<span class="hl-property">command</span>: <span class="hl-variable">wrapIn</span>(<span class="hl-variable">schema</span>.<span class="hl-property">nodes</span>.<span class="hl-property">blockquote</span>), <span class="hl-property">dom</span>: <span class="hl-variable">icon</span>(<span class="hl-string">&quot;&gt;&quot;</span>, <span class="hl-string">&quot;blockquote&quot;</span>)}
+])
+</code></pre>
+<p>The <a href="https://github.com/prosemirror/prosemirror-menu"><code>prosemirror-menu</code>
+package</a> works
+similarly, but adds support for things like simple drop-down menus and
+active/inactive icons (to highlight the strong button when strong text
+is selected).</p>
+<link rel=stylesheet href="../../css/editor.css">
+<script src="../prosemirror.js"></script>
+<script src="example.js"></script></article>
+
+<footer>
+  <nav>
+    <a class=logo href="index.html">&nbsp;</a>
+    <div class=navlinks>
+      <a href="../../backers.html">Backers</a>
+      <a href="http://contributor-covenant.org/version/1/1/0/">Code of Conduct</a>
+      <a href="https://discuss.prosemirror.net/">Discuss</a>
+      <a href="https://github.com/prosemirror/prosemirror/issues">Report an Issue</a>
+    </div>
+  </nav>
+</footer>
+
+</html>

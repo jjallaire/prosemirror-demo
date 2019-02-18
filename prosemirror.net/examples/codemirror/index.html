@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang=en-US>
+<meta charset=utf-8>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>ProseMirror embedded editor example</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel=stylesheet href="../../css/site.css">
+
+<header >
+  <nav>
+    <a class=logo href="../../index.html">ProseMirror</a>
+    <div class=navlinks><a href="../index.html" class=active>Examples</a>
+      <a href="../../docs/index.html" >Documentation</a>
+      <a href="https://discuss.prosemirror.net/">Discuss</a>
+      <a href="https://github.com/prosemirror">GitHub</a>
+      <a href="https://twitter.com/prosemirror">Twitter</a>
+    </div>
+  </nav></header><article><link rel=stylesheet href="../../css/codemirror.css">
+<h1>Embedded code editor</h1>
+<p>It can be useful to have the in-document representation of some node,
+such as a code block, math formula, or image, show up as a custom
+editor control specifically for such content. <a href="../../docs/ref/index.html#view.NodeView">Node
+views</a> are a ProseMirror feature that make this
+possible.</p>
+<p>Wiring this node view and keymap into an editor gives us something
+like this:</p>
+<div id="editor"></div>
+<div id=content style="display: none">
+<h3>The code block is a code editor</h3>
+<p>This editor has been wired up to render code blocks as instances of
+the <a href="http://codemirror.net">CodeMirror</a> code editor, which
+provides syntax highlighting, auto-indentation, and similar.</p>
+<pre>
+function max(a, b) {
+  return a > b ? a : b
+}</pre>
+<p>The content of the code editor is kept in sync with the content of
+the code block in the rich text editor, so that it is as if you're
+directly editing the outer document, using a more convenient
+interface.</p>
+</div>
+<style>.CodeMirror {
+    border: 1px solid #eee;
+    height: auto;
+  }
+  .CodeMirror pre { white-space: pre !important }
+</style>
+<script src="https://cdn.polyfill.io/v2/polyfill.min.js"></script>
+<p>In this example, we set up code blocks, as they exist in the <a href="../../docs/ref/index.html#schema-basic">basic
+schema</a>, to be rendered as instances of
+<a href="http://codemirror.net">CodeMirror</a>, a code editor component. The
+general idea is quite similar to the <a href="../footnote/index.html">footnote example</a>,
+but instead of popping up the node-specific editor when the user
+selects the node, it is always visible.</p>
+<p>The adaptor code in the node view gets a bit more involved, because we
+are translating between two diffent document concepts—ProseMirror's
+tree versus CodeMirror's plain text.</p>
+<pre><code class="language-javascript"><span class="hl-keyword">import</span> <span class="hl-def">CodeMirror</span> <span class="hl-keyword">from</span> <span class="hl-string">&quot;codemirror&quot;</span>
+<span class="hl-keyword">import</span> {<span class="hl-def">exitCode</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-commands&quot;</span>
+<span class="hl-keyword">import</span> {<span class="hl-def">undo</span>, <span class="hl-def">redo</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-history&quot;</span>
+
+<span class="hl-keyword">class</span> <span class="hl-def">CodeBlockView</span> {
+  <span class="hl-property">constructor</span>(<span class="hl-def">node</span>, <span class="hl-def">view</span>, <span class="hl-def">getPos</span>) {
+    <span class="hl-comment">// Store for later</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">node</span> <span class="hl-operator">=</span> <span class="hl-variable-2">node</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">view</span> <span class="hl-operator">=</span> <span class="hl-variable-2">view</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">getPos</span> <span class="hl-operator">=</span> <span class="hl-variable-2">getPos</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">incomingChanges</span> <span class="hl-operator">=</span> <span class="hl-atom">false</span>
+
+    <span class="hl-comment">// Create a CodeMirror instance</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">cm</span> <span class="hl-operator">=</span> <span class="hl-keyword">new</span> <span class="hl-variable">CodeMirror</span>(<span class="hl-atom">null</span>, {
+      <span class="hl-property">value</span>: <span class="hl-keyword">this</span>.<span class="hl-property">node</span>.<span class="hl-property">textContent</span>,
+      <span class="hl-property">lineNumbers</span>: <span class="hl-atom">true</span>,
+      <span class="hl-property">extraKeys</span>: <span class="hl-keyword">this</span>.<span class="hl-property">codeMirrorKeymap</span>()
+    })
+
+    <span class="hl-comment">// The editor's outer node is our DOM representation</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">dom</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">getWrapperElement</span>()
+    <span class="hl-comment">// CodeMirror needs to be in the DOM to properly initialize, so</span>
+    <span class="hl-comment">// schedule it to update itself</span>
+    <span class="hl-variable">setTimeout</span>(() <span class="hl-operator">=&gt;</span> <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">refresh</span>(), <span class="hl-number">20</span>)
+
+    <span class="hl-comment">// This flag is used to avoid an update loop between the outer and</span>
+    <span class="hl-comment">// inner editor</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">updating</span> <span class="hl-operator">=</span> <span class="hl-atom">false</span>
+    <span class="hl-comment">// Track whether changes are have been made but not yet propagated</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">on</span>(<span class="hl-string">&quot;beforeChange&quot;</span>, () <span class="hl-operator">=&gt;</span> <span class="hl-keyword">this</span>.<span class="hl-property">incomingChanges</span> <span class="hl-operator">=</span> <span class="hl-atom">true</span>)
+    <span class="hl-comment">// Propagate updates from the code editor to ProseMirror</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">on</span>(<span class="hl-string">&quot;cursorActivity&quot;</span>, () <span class="hl-operator">=&gt;</span> {
+      <span class="hl-keyword">if</span> (<span class="hl-operator">!</span><span class="hl-keyword">this</span>.<span class="hl-property">updating</span> <span class="hl-operator">&amp;</span><span class="hl-operator">&amp;</span> <span class="hl-operator">!</span><span class="hl-keyword">this</span>.<span class="hl-property">incomingChanges</span>) <span class="hl-keyword">this</span>.<span class="hl-property">forwardSelection</span>()
+    })
+    <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">on</span>(<span class="hl-string">&quot;changes&quot;</span>, () <span class="hl-operator">=&gt;</span> {
+      <span class="hl-keyword">if</span> (<span class="hl-operator">!</span><span class="hl-keyword">this</span>.<span class="hl-property">updating</span>) {
+        <span class="hl-keyword">this</span>.<span class="hl-property">valueChanged</span>()
+        <span class="hl-keyword">this</span>.<span class="hl-property">forwardSelection</span>()
+      }
+      <span class="hl-keyword">this</span>.<span class="hl-property">incomingChanges</span> <span class="hl-operator">=</span> <span class="hl-atom">false</span>
+    })
+    <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">on</span>(<span class="hl-string">&quot;focus&quot;</span>, () <span class="hl-operator">=&gt;</span> <span class="hl-keyword">this</span>.<span class="hl-property">forwardSelection</span>())
+  }
+</code></pre>
+<p>When the code editor is focused, we can keep the selection of the
+outer editor synchronized with the inner one, so that any commands
+executed on the outer editor see an accurate selection.</p>
+<pre><code class="language-javascript">  <span class="hl-variable">forwardSelection</span>() {
+    <span class="hl-keyword">if</span> (<span class="hl-operator">!</span><span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">hasFocus</span>()) <span class="hl-keyword">return</span>
+    <span class="hl-keyword">let</span> <span class="hl-def">state</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">view</span>.<span class="hl-property">state</span>
+    <span class="hl-keyword">let</span> <span class="hl-def">selection</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">asProseMirrorSelection</span>(<span class="hl-variable-2">state</span>.<span class="hl-property">doc</span>)
+    <span class="hl-keyword">if</span> (<span class="hl-operator">!</span><span class="hl-variable-2">selection</span>.<span class="hl-property">eq</span>(<span class="hl-variable-2">state</span>.<span class="hl-property">selection</span>))
+      <span class="hl-keyword">this</span>.<span class="hl-property">view</span>.<span class="hl-property">dispatch</span>(<span class="hl-variable-2">state</span>.<span class="hl-property">tr</span>.<span class="hl-property">setSelection</span>(<span class="hl-variable-2">selection</span>))
+  }
+</code></pre>
+<p>This helper function translates from a CodeMirror selection to a
+ProseMirror selection. Because CodeMirror uses a line/column based
+indexing system, <code>indexFromPos</code> is used to convert to an actual
+character index.</p>
+<pre><code class="language-javascript">  <span class="hl-variable">asProseMirrorSelection</span>(<span class="hl-variable">doc</span>) {
+    <span class="hl-keyword">let</span> <span class="hl-def">offset</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">getPos</span>() <span class="hl-operator">+</span> <span class="hl-number">1</span>
+    <span class="hl-keyword">let</span> <span class="hl-def">anchor</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">indexFromPos</span>(<span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">getCursor</span>(<span class="hl-string">&quot;anchor&quot;</span>)) <span class="hl-operator">+</span> <span class="hl-variable-2">offset</span>
+    <span class="hl-keyword">let</span> <span class="hl-def">head</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">indexFromPos</span>(<span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">getCursor</span>(<span class="hl-string">&quot;head&quot;</span>)) <span class="hl-operator">+</span> <span class="hl-variable-2">offset</span>
+    <span class="hl-keyword">return</span> <span class="hl-variable">TextSelection</span>.<span class="hl-property">create</span>(<span class="hl-variable">doc</span>, <span class="hl-variable-2">anchor</span>, <span class="hl-variable-2">head</span>)
+  }
+</code></pre>
+<p>Selections are also synchronized the other way, from ProseMirror to
+CodeMirror, using the view's
+<a href="../../docs/ref/index.html#view.NodeView.setSelection"><code>setSelection</code></a> method.</p>
+<pre><code class="language-javascript">  <span class="hl-variable">setSelection</span>(<span class="hl-variable">anchor</span>, <span class="hl-variable">head</span>) {
+    <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">focus</span>()
+    <span class="hl-keyword">this</span>.<span class="hl-property">updating</span> <span class="hl-operator">=</span> <span class="hl-atom">true</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">setSelection</span>(<span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">posFromIndex</span>(<span class="hl-variable">anchor</span>),
+                         <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">posFromIndex</span>(<span class="hl-variable">head</span>))
+    <span class="hl-keyword">this</span>.<span class="hl-property">updating</span> <span class="hl-operator">=</span> <span class="hl-atom">false</span>
+  }
+</code></pre>
+<p>When the actual content of the code editor is changed, the event
+handler registered in the node view's constructor calls this method.
+It'll compare the code block node's current value to the value in the
+editor, and dispatch a transaction if there is a difference.</p>
+<pre><code class="language-javascript">  <span class="hl-variable">valueChanged</span>() {
+    <span class="hl-keyword">let</span> <span class="hl-def">change</span> <span class="hl-operator">=</span> <span class="hl-variable">computeChange</span>(<span class="hl-keyword">this</span>.<span class="hl-property">node</span>.<span class="hl-property">textContent</span>, <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">getValue</span>())
+    <span class="hl-keyword">if</span> (<span class="hl-variable-2">change</span>) {
+      <span class="hl-keyword">let</span> <span class="hl-def">start</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">getPos</span>() <span class="hl-operator">+</span> <span class="hl-number">1</span>
+      <span class="hl-keyword">let</span> <span class="hl-def">tr</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">view</span>.<span class="hl-property">state</span>.<span class="hl-property">tr</span>.<span class="hl-property">replaceWith</span>(
+        <span class="hl-variable-2">start</span> <span class="hl-operator">+</span> <span class="hl-variable-2">change</span>.<span class="hl-property">from</span>, <span class="hl-variable-2">start</span> <span class="hl-operator">+</span> <span class="hl-variable-2">change</span>.<span class="hl-property">to</span>,
+        <span class="hl-variable-2">change</span>.<span class="hl-property">text</span> <span class="hl-operator">?</span> <span class="hl-variable">schema</span>.<span class="hl-property">text</span>(<span class="hl-variable-2">change</span>.<span class="hl-property">text</span>) : <span class="hl-atom">null</span>)
+      <span class="hl-keyword">this</span>.<span class="hl-property">view</span>.<span class="hl-property">dispatch</span>(<span class="hl-variable-2">tr</span>)
+    }
+  }
+</code></pre>
+<p>A somewhat tricky aspect of nesting editor like this is handling
+cursor motion across the edges of the inner editor. This node view
+will have to take care of allowing the user to move the selection out
+of the code editor. For that purpose, it binds the arrow keys to
+handlers that check if further motion would ‘escape’ the editor, and
+if so, return the selection and focus to the outer editor.</p>
+<p>The keymap also binds keys for undo and redo, which the outer editor
+will handle, and for ctrl-enter, which, in ProseMirror's base keymap,
+creates a new paragraph after a code block.</p>
+<pre><code class="language-javascript">  <span class="hl-variable">codeMirrorKeymap</span>() {
+    <span class="hl-keyword">let</span> <span class="hl-def">view</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">view</span>
+    <span class="hl-keyword">let</span> <span class="hl-def">mod</span> <span class="hl-operator">=</span> <span class="hl-string-2">/Mac/</span>.<span class="hl-property">test</span>(<span class="hl-variable">navigator</span>.<span class="hl-property">platform</span>) <span class="hl-operator">?</span> <span class="hl-string">&quot;Cmd&quot;</span> : <span class="hl-string">&quot;Ctrl&quot;</span>
+    <span class="hl-keyword">return</span> <span class="hl-variable">CodeMirror</span>.<span class="hl-property">normalizeKeyMap</span>({
+      <span class="hl-property">Up</span>: () <span class="hl-operator">=&gt;</span> <span class="hl-keyword">this</span>.<span class="hl-property">maybeEscape</span>(<span class="hl-string">&quot;line&quot;</span>, <span class="hl-operator">-</span><span class="hl-number">1</span>),
+      <span class="hl-property">Left</span>: () <span class="hl-operator">=&gt;</span> <span class="hl-keyword">this</span>.<span class="hl-property">maybeEscape</span>(<span class="hl-string">&quot;char&quot;</span>, <span class="hl-operator">-</span><span class="hl-number">1</span>),
+      <span class="hl-property">Down</span>: () <span class="hl-operator">=&gt;</span> <span class="hl-keyword">this</span>.<span class="hl-property">maybeEscape</span>(<span class="hl-string">&quot;line&quot;</span>, <span class="hl-number">1</span>),
+      <span class="hl-property">Right</span>: () <span class="hl-operator">=&gt;</span> <span class="hl-keyword">this</span>.<span class="hl-property">maybeEscape</span>(<span class="hl-string">&quot;char&quot;</span>, <span class="hl-number">1</span>),
+      [<span class="hl-string-2">`${</span><span class="hl-variable-2">mod</span><span class="hl-string-2">}</span><span class="hl-string-2">-Z`</span>]: () <span class="hl-operator">=&gt;</span> <span class="hl-variable">undo</span>(<span class="hl-variable-2">view</span>.<span class="hl-property">state</span>, <span class="hl-variable-2">view</span>.<span class="hl-property">dispatch</span>),
+      [<span class="hl-string-2">`Shift-${</span><span class="hl-variable-2">mod</span><span class="hl-string-2">}</span><span class="hl-string-2">-Z`</span>]: () <span class="hl-operator">=&gt;</span> <span class="hl-variable">redo</span>(<span class="hl-variable-2">view</span>.<span class="hl-property">state</span>, <span class="hl-variable-2">view</span>.<span class="hl-property">dispatch</span>),
+      [<span class="hl-string-2">`${</span><span class="hl-variable-2">mod</span><span class="hl-string-2">}</span><span class="hl-string-2">-Y`</span>]: () <span class="hl-operator">=&gt;</span> <span class="hl-variable">redo</span>(<span class="hl-variable-2">view</span>.<span class="hl-property">state</span>, <span class="hl-variable-2">view</span>.<span class="hl-property">dispatch</span>),
+      <span class="hl-string hl-property">&quot;Ctrl-Enter&quot;</span>: () <span class="hl-operator">=&gt;</span> {
+        <span class="hl-keyword">if</span> (<span class="hl-variable">exitCode</span>(<span class="hl-variable-2">view</span>.<span class="hl-property">state</span>, <span class="hl-variable-2">view</span>.<span class="hl-property">dispatch</span>)) <span class="hl-variable-2">view</span>.<span class="hl-property">focus</span>()
+      }
+    })
+  }
+
+  <span class="hl-variable">maybeEscape</span>(<span class="hl-variable">unit</span>, <span class="hl-variable">dir</span>) {
+    <span class="hl-keyword">let</span> <span class="hl-def">pos</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">getCursor</span>()
+    <span class="hl-keyword">if</span> (<span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">somethingSelected</span>() <span class="hl-operator">|</span><span class="hl-operator">|</span>
+        <span class="hl-variable-2">pos</span>.<span class="hl-property">line</span> <span class="hl-operator">!=</span> (<span class="hl-variable">dir</span> <span class="hl-operator">&lt;</span> <span class="hl-number">0</span> <span class="hl-operator">?</span> <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">firstLine</span>() : <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">lastLine</span>()) <span class="hl-operator">|</span><span class="hl-operator">|</span>
+        (<span class="hl-variable">unit</span> <span class="hl-operator">==</span> <span class="hl-string">&quot;char&quot;</span> <span class="hl-operator">&amp;</span><span class="hl-operator">&amp;</span>
+         <span class="hl-variable-2">pos</span>.<span class="hl-property">ch</span> <span class="hl-operator">!=</span> (<span class="hl-variable">dir</span> <span class="hl-operator">&lt;</span> <span class="hl-number">0</span> <span class="hl-operator">?</span> <span class="hl-number">0</span> : <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">getLine</span>(<span class="hl-variable-2">pos</span>.<span class="hl-property">line</span>).<span class="hl-property">length</span>)))
+      <span class="hl-keyword">return</span> <span class="hl-variable">CodeMirror</span>.<span class="hl-property">Pass</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">view</span>.<span class="hl-property">focus</span>()
+    <span class="hl-keyword">let</span> <span class="hl-def">targetPos</span> <span class="hl-operator">=</span> <span class="hl-keyword">this</span>.<span class="hl-property">getPos</span>() <span class="hl-operator">+</span> (<span class="hl-variable">dir</span> <span class="hl-operator">&lt;</span> <span class="hl-number">0</span> <span class="hl-operator">?</span> <span class="hl-number">0</span> : <span class="hl-keyword">this</span>.<span class="hl-property">node</span>.<span class="hl-property">nodeSize</span>)
+    <span class="hl-keyword">let</span> <span class="hl-def">selection</span> <span class="hl-operator">=</span> <span class="hl-variable">Selection</span>.<span class="hl-property">near</span>(<span class="hl-keyword">this</span>.<span class="hl-property">view</span>.<span class="hl-property">state</span>.<span class="hl-property">doc</span>.<span class="hl-property">resolve</span>(<span class="hl-variable-2">targetPos</span>), <span class="hl-variable">dir</span>)
+    <span class="hl-keyword">this</span>.<span class="hl-property">view</span>.<span class="hl-property">dispatch</span>(<span class="hl-keyword">this</span>.<span class="hl-property">view</span>.<span class="hl-property">state</span>.<span class="hl-property">tr</span>.<span class="hl-property">setSelection</span>(<span class="hl-variable-2">selection</span>).<span class="hl-property">scrollIntoView</span>())
+    <span class="hl-keyword">this</span>.<span class="hl-property">view</span>.<span class="hl-property">focus</span>()
+  }
+</code></pre>
+<p>When an update comes in from the editor, for example because of an
+undo action, we kind of have to do the inverse of what <code>valueChanged</code>
+did—check for text changes, and if present, propagate them from the
+outer to the inner editor.</p>
+<pre><code class="language-javascript">  <span class="hl-variable">update</span>(<span class="hl-variable">node</span>) {
+    <span class="hl-keyword">if</span> (<span class="hl-variable">node</span>.<span class="hl-property">type</span> <span class="hl-operator">!=</span> <span class="hl-keyword">this</span>.<span class="hl-property">node</span>.<span class="hl-property">type</span>) <span class="hl-keyword">return</span> <span class="hl-atom">false</span>
+    <span class="hl-keyword">this</span>.<span class="hl-property">node</span> <span class="hl-operator">=</span> <span class="hl-variable">node</span>
+    <span class="hl-keyword">let</span> <span class="hl-def">change</span> <span class="hl-operator">=</span> <span class="hl-variable">computeChange</span>(<span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">getValue</span>(), <span class="hl-variable">node</span>.<span class="hl-property">textContent</span>)
+    <span class="hl-keyword">if</span> (<span class="hl-variable-2">change</span>) {
+      <span class="hl-keyword">this</span>.<span class="hl-property">updating</span> <span class="hl-operator">=</span> <span class="hl-atom">true</span>
+      <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">replaceRange</span>(<span class="hl-variable-2">change</span>.<span class="hl-property">text</span>, <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">posFromIndex</span>(<span class="hl-variable-2">change</span>.<span class="hl-property">from</span>),
+                           <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">posFromIndex</span>(<span class="hl-variable-2">change</span>.<span class="hl-property">to</span>))
+      <span class="hl-keyword">this</span>.<span class="hl-property">updating</span> <span class="hl-operator">=</span> <span class="hl-atom">false</span>
+    }
+    <span class="hl-keyword">return</span> <span class="hl-atom">true</span>
+  }
+</code></pre>
+<p>The <code>updating</code> property is used to disable the event handlers on the
+code editor.</p>
+<pre><code class="language-javascript">
+  <span class="hl-variable">selectNode</span>() { <span class="hl-keyword">this</span>.<span class="hl-property">cm</span>.<span class="hl-property">focus</span>() }
+  <span class="hl-variable">stopEvent</span>() { <span class="hl-keyword">return</span> <span class="hl-atom">true</span> }
+}
+</code></pre>
+<p><code>computeChange</code> which was used to compare two strings and find the
+minimal change between them, looks like this:</p>
+<pre><code class="language-javascript"><span class="hl-keyword">function</span> <span class="hl-def">computeChange</span>(<span class="hl-def">oldVal</span>, <span class="hl-def">newVal</span>) {
+  <span class="hl-keyword">if</span> (<span class="hl-variable-2">oldVal</span> <span class="hl-operator">==</span> <span class="hl-variable-2">newVal</span>) <span class="hl-keyword">return</span> <span class="hl-atom">null</span>
+  <span class="hl-keyword">let</span> <span class="hl-def">start</span> <span class="hl-operator">=</span> <span class="hl-number">0</span>, <span class="hl-def">oldEnd</span> <span class="hl-operator">=</span> <span class="hl-variable-2">oldVal</span>.<span class="hl-property">length</span>, <span class="hl-def">newEnd</span> <span class="hl-operator">=</span> <span class="hl-variable-2">newVal</span>.<span class="hl-property">length</span>
+  <span class="hl-keyword">while</span> (<span class="hl-variable-2">start</span> <span class="hl-operator">&lt;</span> <span class="hl-variable-2">oldEnd</span> <span class="hl-operator">&amp;</span><span class="hl-operator">&amp;</span> <span class="hl-variable-2">oldVal</span>.<span class="hl-property">charCodeAt</span>(<span class="hl-variable-2">start</span>) <span class="hl-operator">==</span> <span class="hl-variable-2">newVal</span>.<span class="hl-property">charCodeAt</span>(<span class="hl-variable-2">start</span>)) <span class="hl-operator">++</span><span class="hl-variable-2">start</span>
+  <span class="hl-keyword">while</span> (<span class="hl-variable-2">oldEnd</span> <span class="hl-operator">&gt;</span> <span class="hl-variable-2">start</span> <span class="hl-operator">&amp;</span><span class="hl-operator">&amp;</span> <span class="hl-variable-2">newEnd</span> <span class="hl-operator">&gt;</span> <span class="hl-variable-2">start</span> <span class="hl-operator">&amp;</span><span class="hl-operator">&amp;</span>
+         <span class="hl-variable-2">oldVal</span>.<span class="hl-property">charCodeAt</span>(<span class="hl-variable-2">oldEnd</span> <span class="hl-operator">-</span> <span class="hl-number">1</span>) <span class="hl-operator">==</span> <span class="hl-variable-2">newVal</span>.<span class="hl-property">charCodeAt</span>(<span class="hl-variable-2">newEnd</span> <span class="hl-operator">-</span> <span class="hl-number">1</span>)) { <span class="hl-variable-2">oldEnd</span><span class="hl-operator">--</span>; <span class="hl-variable-2">newEnd</span><span class="hl-operator">--</span> }
+  <span class="hl-keyword">return</span> {<span class="hl-property">from</span>: <span class="hl-variable-2">start</span>, <span class="hl-property">to</span>: <span class="hl-variable-2">oldEnd</span>, <span class="hl-property">text</span>: <span class="hl-variable-2">newVal</span>.<span class="hl-property">slice</span>(<span class="hl-variable-2">start</span>, <span class="hl-variable-2">newEnd</span>)}
+}
+</code></pre>
+<p>It iterates from the start and end of the strings, until it hits a
+difference, and returns an object giving the change's start, end, and
+replacement text, or <code>null</code> if there was no change.</p>
+<p>Handling cursor motion from the outer to the inner editor must be done
+with a keymap on the outer editor. The <code>arrowHandler</code> function uses
+the <a href="../../docs/ref/index.html#view.EditorView.endOfTextblock"><code>endOfTextblock</code> method</a> to
+determine, in a bidi-text-aware way, whether the cursor is at the end
+of a given textblock. If it is, and the next block is a code block,
+the selection is moved into it.</p>
+<pre><code class="language-javascript"><span class="hl-keyword">import</span> {<span class="hl-def">keymap</span>} <span class="hl-keyword">from</span> <span class="hl-string">&quot;prosemirror-keymap&quot;</span>
+
+<span class="hl-keyword">function</span> <span class="hl-def">arrowHandler</span>(<span class="hl-def">dir</span>) {
+  <span class="hl-keyword">return</span> (<span class="hl-def">state</span>, <span class="hl-def">dispatch</span>, <span class="hl-def">view</span>) <span class="hl-operator">=&gt;</span> {
+    <span class="hl-keyword">if</span> (<span class="hl-variable-2">state</span>.<span class="hl-property">selection</span>.<span class="hl-property">empty</span> <span class="hl-operator">&amp;</span><span class="hl-operator">&amp;</span> <span class="hl-variable-2">view</span>.<span class="hl-property">endOfTextblock</span>(<span class="hl-variable-2">dir</span>)) {
+      <span class="hl-keyword">let</span> <span class="hl-def">side</span> <span class="hl-operator">=</span> <span class="hl-variable-2">dir</span> <span class="hl-operator">==</span> <span class="hl-string">&quot;left&quot;</span> <span class="hl-operator">|</span><span class="hl-operator">|</span> <span class="hl-variable-2">dir</span> <span class="hl-operator">==</span> <span class="hl-string">&quot;up&quot;</span> <span class="hl-operator">?</span> <span class="hl-operator">-</span><span class="hl-number">1</span> : <span class="hl-number">1</span>, <span class="hl-def">$head</span> <span class="hl-operator">=</span> <span class="hl-variable-2">state</span>.<span class="hl-property">selection</span>.<span class="hl-property">$head</span>
+      <span class="hl-keyword">let</span> <span class="hl-def">nextPos</span> <span class="hl-operator">=</span> <span class="hl-variable">Selection</span>.<span class="hl-property">near</span>(<span class="hl-variable-2">state</span>.<span class="hl-property">doc</span>.<span class="hl-property">resolve</span>(<span class="hl-variable-2">side</span> <span class="hl-operator">&gt;</span> <span class="hl-number">0</span> <span class="hl-operator">?</span> <span class="hl-variable-2">$head</span>.<span class="hl-property">after</span>() : <span class="hl-variable-2">$head</span>.<span class="hl-property">before</span>()), <span class="hl-variable-2">side</span>)
+      <span class="hl-keyword">if</span> (<span class="hl-variable-2">nextPos</span>.<span class="hl-property">$head</span> <span class="hl-operator">&amp;</span><span class="hl-operator">&amp;</span> <span class="hl-variable-2">nextPos</span>.<span class="hl-property">$head</span>.<span class="hl-property">parent</span>.<span class="hl-property">type</span>.<span class="hl-property">name</span> <span class="hl-operator">==</span> <span class="hl-string">&quot;code_block&quot;</span>) {
+        <span class="hl-variable-2">dispatch</span>(<span class="hl-variable-2">state</span>.<span class="hl-property">tr</span>.<span class="hl-property">setSelection</span>(<span class="hl-variable-2">nextPos</span>))
+        <span class="hl-keyword">return</span> <span class="hl-atom">true</span>
+      }
+    }
+    <span class="hl-keyword">return</span> <span class="hl-atom">false</span>
+  }
+}
+
+<span class="hl-keyword">const</span> <span class="hl-def">arrowHandlers</span> <span class="hl-operator">=</span> <span class="hl-variable">keymap</span>({
+  <span class="hl-property">ArrowLeft</span>: <span class="hl-variable">arrowHandler</span>(<span class="hl-string">&quot;left&quot;</span>),
+  <span class="hl-property">ArrowRight</span>: <span class="hl-variable">arrowHandler</span>(<span class="hl-string">&quot;right&quot;</span>),
+  <span class="hl-property">ArrowUp</span>: <span class="hl-variable">arrowHandler</span>(<span class="hl-string">&quot;up&quot;</span>),
+  <span class="hl-property">ArrowDown</span>: <span class="hl-variable">arrowHandler</span>(<span class="hl-string">&quot;down&quot;</span>)
+})
+</code></pre>
+<link rel=stylesheet href="../../css/editor.css">
+<script src="../prosemirror.js"></script>
+<script src="example.js"></script></article>
+
+<footer>
+  <nav>
+    <a class=logo href="index.html">&nbsp;</a>
+    <div class=navlinks>
+      <a href="../../backers.html">Backers</a>
+      <a href="http://contributor-covenant.org/version/1/1/0/">Code of Conduct</a>
+      <a href="https://discuss.prosemirror.net/">Discuss</a>
+      <a href="https://github.com/prosemirror/prosemirror/issues">Report an Issue</a>
+    </div>
+  </nav>
+</footer>
+
+</html>
